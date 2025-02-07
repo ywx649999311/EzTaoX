@@ -47,7 +47,7 @@ ignore = [
     "PLR0915", # Allow many statements
     "PLR2004", # Allow magic numbers in comparisons
 ]
-exclude = ["dev/*.py"]
+exclude = []
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
