@@ -1,0 +1,54 @@
+[project]
+name = "eztaox"
+version = "0.1.0"
+description = "TBD"
+authors = [
+    {name = "Weixiang Yu",email = "astro.flyfish@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.10, <4.0"
+dependencies = [
+    "tinygp (>=0.3.0,<0.4.0)",
+    "jax (<=0.4.31)",
+    "jaxlib (<=0.4.31)",
+    "jaxopt (>=0.8.3,<0.9.0)",
+    "optax (>=0.2.4,<0.3.0)",
+    "numpyro (>=0.17.0,<0.18.0)",
+    "arviz (>=0.20.0,<0.21.0)"
+]
+
+
+[tool.poetry.group.dev.dependencies]
+eztao = "^0.4.3"
+ipykernel = "^6.29.0"
+pre-commit = "^3.5.0"
+ruff = "^0.1.6"
+matplotlib = "^3.3.0"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^6.0.1"
+pytest-cov = "^2.10.1"
+nox = "^2023.4.22"
+nox-poetry = "^1.0.3"
+poetry-plugin-export = "^1.6.0"
+
+[tool.jupytext]
+formats = "ipynb,py:percent"
+notebook_metadata_filter="-all"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+ignore = [
+    "E741",    # Allow ambiguous variable names
+    "PLR0911", # Allow many return statements
+    "PLR0913", # Allow many arguments to functions
+    "PLR0915", # Allow many statements
+    "PLR2004", # Allow magic numbers in comparisons
+]
+exclude = ["dev/*.py"]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
