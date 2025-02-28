@@ -16,6 +16,10 @@ repos:
     hooks:
       # Run the linter
       - id: ruff
+        exclude: ^dev/
+        types_or: [ python, pyi ]
         args: [--fix, --exit-non-zero-on-fix]
       # Run the formattter
       - id: ruff-format
+        exclude: ^dev/
+        types_or: [ python, pyi ]

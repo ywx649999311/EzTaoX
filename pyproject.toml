@@ -23,7 +23,7 @@ dependencies = [
 eztao = "^0.4.3"
 ipykernel = "^6.29.0"
 pre-commit = "^3.5.0"
-ruff = "^0.1.6"
+ruff = "^0.2.1"
 matplotlib = "^3.3.0"
 
 [tool.poetry.group.test.dependencies]
@@ -40,6 +40,7 @@ notebook_metadata_filter="-all"
 [tool.ruff]
 target-version = "py312"
 line-length = 88
+select = ["E", "F", 'I', 'W', 'UP']
 ignore = [
     "E741",    # Allow ambiguous variable names
     "PLR0911", # Allow many return statements
@@ -47,7 +48,11 @@ ignore = [
     "PLR0915", # Allow many statements
     "PLR2004", # Allow magic numbers in comparisons
 ]
-exclude = []
+# exclude = ["dev/"]
+
+[tool.ruff.format]
+skip-magic-trailing-comma = false
+quote-style = "double"  # Matches Black's double-quote style
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
