@@ -4,6 +4,7 @@ from functools import partial
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpyro
 from jax.tree_util import PyTreeDef
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
@@ -25,6 +26,8 @@ class LCModel(eqx.Module):
         self.diag = diag
         self.y = y
         self.kernel_def = jax.tree_util.tree_flatten(kernel)[1]
+        self.has_lag = has_lag
+        self.zero_mean = zero_mean
         self.nBand = self.X[1].max() + 1
 
     def lag_transform(self, lags) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
@@ -74,3 +77,32 @@ class LCModel(eqx.Module):
         )
 
         return -gp.log_probability(self.y[inds])
+
+    def sample(self, params):
+        # time axis transform
+        lags = jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
+        X, inds = self.lag_transform(lags)
+        t = X[0]
+        band = X[1]
+
+        # amps
+        log_amps = jnp.insert(jnp.atleast_1d(params["log_amp_delta"]), 0, 0.0)
+
+        # def mean + kernel
+        means = partial(LCModel.mean_func, params["mean"])
+        kernel = mb_kernel(
+            amplitudes=jnp.exp(log_amps),
+            kernel=jax.tree.unflatten(
+                self.kernel_def, jnp.exp(params["log_kernel_param"])
+            ),
+        )
+
+        gp = GaussianProcess(
+            kernel,
+            (t[inds], band[inds]),
+            diag=self.diag[inds],
+            mean=means,
+            assume_sorted=True,
+        )
+
+        return numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[inds])
