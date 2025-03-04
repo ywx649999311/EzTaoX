@@ -40,27 +40,27 @@ class LCModel(eqx.Module):
     def mean_func(means, X) -> JAXArray:
         return means[X[1]]
 
-    def __call__(self, params) -> JAXArray:
+    def log_prob(self, params) -> JAXArray:
+        has_lag = self.has_lag
+        zero_mean = self.zero_mean
+        return self.__call__(has_lag, zero_mean, params)
+
+    def __call__(self, has_lag, zero_mean, params) -> JAXArray:
         # time axis transform
-        lags = jax.lax.select(
-            self.has_lag is True,
-            jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0),
-            jnp.zeros(self.nBand),
-        )
+        if has_lag is True:
+            lags = jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
+        else:
+            lags = jnp.zeros(self.nBand)
         X, inds = self.lag_transform(lags)
         t = X[0]
         band = X[1]
 
-        # amps
+        # amps + mean + kernel
         log_amps = jnp.insert(jnp.atleast_1d(params["log_amp_delta"]), 0, 0.0)
-
-        # def mean + kernel
-        means = partial(
-            LCModel.mean_func,
-            jax.lax.select(
-                self.zero_mean is True, jnp.zeros(self.nBand), params["mean"]
-            ),
-        )
+        if zero_mean is True:
+            means = partial(LCModel.mean_func, jnp.zeros(self.nBand))
+        else:
+            means = partial(LCModel.mean_func, params["mean"])
         kernel = mb_kernel(
             amplitudes=jnp.exp(log_amps),
             kernel=jax.tree.unflatten(
