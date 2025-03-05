@@ -20,4 +20,4 @@ def formatlc(
         [jnp.ones(len(ts[x])) * band_order[x] for x in band_keys]
     ).astype(int)
 
-    return (tss, band_idxs), yss, yerrss**2
+    return (tss, band_idxs), yss, yerrss
