@@ -19,25 +19,38 @@ class LCModel(eqx.Module):
     kernel_def: PyTreeDef
     has_lag: bool = False
     zero_mean: bool = True
-    nBand: int
+    has_jitter: bool = False
 
-    def __init__(self, X, y, diag, kernel, has_lag=False, zero_mean=True) -> None:
+    def __init__(self, X, y, diag, kernel, **kwargs) -> None:
         self.X = X
         self.diag = diag
         self.y = y
         self.kernel_def = jax.tree_util.tree_flatten(kernel)[1]
-        self.has_lag = has_lag
-        self.zero_mean = zero_mean
-        self.nBand = self.X[1].max() + 1
+        self.has_lag = kwargs.get("has_lag", False)
+        self.zero_mean = kwargs.get("zero_mean", True)
+        self.has_jitter = kwargs.get("has_jitter", False)
 
-    def lag_transform(self, lags) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
+    def lag_transform(
+        self, has_lag, nBand, params
+    ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
+        if has_lag is True:
+            lags = jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
+        else:
+            lags = jnp.zeros(nBand)
         t, band = self.X
         new_t = t - lags[band]
         inds = jnp.argsort(new_t)
         return (new_t, band), inds
 
+    def amp_transform(self, params) -> JAXArray:
+        return jnp.insert(jnp.atleast_1d(params["log_amp_delta"]), 0, 0.0)
+
     @staticmethod
-    def mean_func(means, X) -> JAXArray:
+    def mean_func(zero_mean, nBand, params, X) -> JAXArray:
+        if zero_mean is True:
+            means = jnp.zeros(nBand)
+        else:
+            means = params["mean"]
         return means[X[1]]
 
     def log_prob(self, params) -> JAXArray:
@@ -46,23 +59,16 @@ class LCModel(eqx.Module):
         return self.__call__(has_lag, zero_mean, params)
 
     def __call__(self, has_lag, zero_mean, params) -> JAXArray:
-        # log amp
-        log_amps = jnp.insert(jnp.atleast_1d(params["log_amp_delta"]), 0, 0.0)
+        # log amp + mean
+        log_amps = self.amp_transform(params)
+        means = partial(LCModel.mean_func, zero_mean, log_amps.shape[0], params)
 
         # time axis transform
-        if has_lag is True:
-            lags = jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
-        else:
-            lags = jnp.zeros(log_amps.shape[0])
-        X, inds = self.lag_transform(lags)
+        X, inds = self.lag_transform(has_lag, log_amps.shape[0], params)
         t = X[0]
         band = X[1]
 
-        # mean + kernel
-        if zero_mean is True:
-            means = partial(LCModel.mean_func, jnp.zeros(log_amps.shape[0]))
-        else:
-            means = partial(LCModel.mean_func, params["mean"])
+        # def kernel
         kernel = mb_kernel(
             amplitudes=jnp.exp(log_amps),
             kernel=jax.tree.unflatten(
@@ -86,23 +92,16 @@ class LCModel(eqx.Module):
         return self._sample(has_lag, zero_mean, params)
 
     def _sample(self, has_lag, zero_mean, params):
-        # log amp
-        log_amps = jnp.insert(jnp.atleast_1d(params["log_amp_delta"]), 0, 0.0)
+        # log amp + mean
+        log_amps = self.amp_transform(params)
+        means = partial(LCModel.mean_func, zero_mean, log_amps.shape[0], params)
 
         # time axis transform
-        if has_lag is True:
-            lags = jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
-        else:
-            lags = jnp.zeros(log_amps.shape[0])
-        X, inds = self.lag_transform(lags)
+        X, inds = self.lag_transform(has_lag, log_amps.shape[0], params)
         t = X[0]
         band = X[1]
 
-        # def mean + kernel
-        if zero_mean is True:
-            means = partial(LCModel.mean_func, jnp.zeros(log_amps.shape[0]))
-        else:
-            means = partial(LCModel.mean_func, params["mean"])
+        # def kernel
         kernel = mb_kernel(
             amplitudes=jnp.exp(log_amps),
             kernel=jax.tree.unflatten(
