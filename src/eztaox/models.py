@@ -17,18 +17,18 @@ class LCModel(eqx.Module):
     y: JAXArray
     diag: JAXArray
     kernel_def: PyTreeDef
-    has_lag: bool = False
     zero_mean: bool = True
     has_jitter: bool = False
+    has_lag: bool = False
 
     def __init__(self, X, y, diag, kernel, **kwargs) -> None:
         self.X = X
         self.diag = diag
         self.y = y
         self.kernel_def = jax.tree_util.tree_flatten(kernel)[1]
-        self.has_lag = kwargs.get("has_lag", False)
         self.zero_mean = kwargs.get("zero_mean", True)
         self.has_jitter = kwargs.get("has_jitter", False)
+        self.has_lag = kwargs.get("has_lag", False)
 
     def lag_transform(
         self, has_lag, nBand, params
@@ -54,19 +54,27 @@ class LCModel(eqx.Module):
         return means[X[1]]
 
     def log_prob(self, params) -> JAXArray:
-        has_lag = self.has_lag
         zero_mean = self.zero_mean
-        return self.__call__(has_lag, zero_mean, params)
+        has_lag = self.has_lag
+        has_jitter = self.has_jitter
+        return self.__call__(zero_mean, has_jitter, has_lag, params)
 
-    def __call__(self, has_lag, zero_mean, params) -> JAXArray:
+    def __call__(self, zero_mean, has_jitter, has_lag, params) -> JAXArray:
         # log amp + mean
         log_amps = self.amp_transform(params)
         means = partial(LCModel.mean_func, zero_mean, log_amps.shape[0], params)
 
-        # time axis transform
+        # time axis transform: t and band are not sorted,
+        # inds gives the sorted indices for the new_t
         X, inds = self.lag_transform(has_lag, log_amps.shape[0], params)
         t = X[0]
         band = X[1]
+
+        # add jitter to the diagonal
+        if has_jitter is True:
+            diags = self.diag[inds] + (jnp.exp(params["log_jitter"]) ** 2)[band[inds]]
+        else:
+            diags = self.diag[inds]
 
         # def kernel
         kernel = mb_kernel(
@@ -79,7 +87,7 @@ class LCModel(eqx.Module):
         gp = GaussianProcess(
             kernel,
             (t[inds], band[inds]),
-            diag=self.diag[inds],
+            diag=diags,
             mean=means,
             assume_sorted=True,
         )
@@ -87,11 +95,12 @@ class LCModel(eqx.Module):
         return -gp.log_probability(self.y[inds])
 
     def sample(self, params):
-        has_lag = self.has_lag
         zero_mean = self.zero_mean
-        return self._sample(has_lag, zero_mean, params)
+        has_lag = self.has_lag
+        has_jitter = self.has_jitter
+        return self._sample(zero_mean, has_jitter, has_lag, params)
 
-    def _sample(self, has_lag, zero_mean, params):
+    def _sample(self, zero_mean, has_jitter, has_lag, params):
         # log amp + mean
         log_amps = self.amp_transform(params)
         means = partial(LCModel.mean_func, zero_mean, log_amps.shape[0], params)
@@ -100,6 +109,12 @@ class LCModel(eqx.Module):
         X, inds = self.lag_transform(has_lag, log_amps.shape[0], params)
         t = X[0]
         band = X[1]
+
+        # add jitter to the diagonal
+        if has_jitter is True:
+            diags = self.diag[inds] + (jnp.exp(params["log_jitter"]) ** 2)[band[inds]]
+        else:
+            diags = self.diag[inds]
 
         # def kernel
         kernel = mb_kernel(
@@ -112,7 +127,7 @@ class LCModel(eqx.Module):
         gp = GaussianProcess(
             kernel,
             (t[inds], band[inds]),
-            diag=self.diag[inds],
+            diag=diags,
             mean=means,
             assume_sorted=True,
         )
