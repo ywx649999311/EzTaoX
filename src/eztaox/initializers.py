@@ -34,8 +34,15 @@ class UniformInit(InitializerBase):
         nSample: int,
     ) -> JAXArray:
         key1, _ = jax.random.split(key, 2)
-        mean = dist.Uniform(*self.Range).sample(key1, (nSample, self.n))
-        return mean
+        if self.n == 1:
+            samples = dist.Uniform(*self.Range).sample(key1, (nSample,))
+        else:
+            samples = dist.Uniform(*self.Range).sample(key1, (nSample, self.n))
+
+        if nSample == 1:
+            return samples[0]
+        else:
+            return samples
 
 
 class ExpInit(InitializerBase):
@@ -56,10 +63,13 @@ class ExpInit(InitializerBase):
         nSample: int,
     ) -> JAXArray:
         key1, key2 = jax.random.split(key)
-        scale = dist.Uniform(*self.logScaleRange).sample(key1, (nSample,))
-        sigma = dist.Uniform(*self.logSigmaRange).sample(key2, (nSample,))
+        logScale = dist.Uniform(*self.logScaleRange).sample(key1, (nSample,))
+        logSigma = dist.Uniform(*self.logSigmaRange).sample(key2, (nSample,))
 
-        return jnp.stack([scale, sigma], axis=-1)
+        if nSample == 1:
+            return jnp.stack([logScale, logSigma], axis=1)[0]
+        else:
+            return jnp.stack([logScale, logSigma], axis=-1)
 
 
 class CeleriteInit(InitializerBase):
@@ -91,7 +101,10 @@ class CeleriteInit(InitializerBase):
         c = dist.Uniform(*self.cRange).sample(key3, (nSample,))
         d = dist.Uniform(*self.dRange).sample(key4, (nSample,))
 
-        return jnp.stack([a, b, c, d], axis=-1)
+        if nSample == 1:
+            return jnp.stack([a, b, c, d], axis=-1)[0]
+        else:
+            return jnp.stack([a, b, c, d], axis=-1)
 
 
 class SHOInit(InitializerBase):
@@ -115,11 +128,14 @@ class SHOInit(InitializerBase):
         nSample: int,
     ) -> JAXArray:
         key1, key2, key3 = jax.random.split(key, 3)
-        omega = dist.Uniform(*self.logOmegaRange).sample(key1, (nSample,))
-        quality = dist.Uniform(*self.logQualityRange).sample(key2, (nSample,))
-        sigma = dist.Uniform(*self.logSigmaRange).sample(key3, (nSample,))
+        logOmega = dist.Uniform(*self.logOmegaRange).sample(key1, (nSample,))
+        logQuality = dist.Uniform(*self.logQualityRange).sample(key2, (nSample,))
+        logSigma = dist.Uniform(*self.logSigmaRange).sample(key3, (nSample,))
 
-        return jnp.stack([omega, quality, sigma], axis=-1)
+        if nSample == 1:
+            return jnp.stack([logOmega, logQuality, logSigma], axis=-1)[0]
+        else:
+            return jnp.stack([logOmega, logQuality, logSigma], axis=-1)
 
 
 # alias

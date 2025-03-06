@@ -50,13 +50,13 @@ class MultiVarModel(eqx.Module):
         if zero_mean is True:
             means = jnp.zeros(nBand)
         else:
-            means = params["mean"]
+            means = jnp.atleast_1d(params["mean"])
         return means[X[1]]
 
     def log_prob(self, params) -> JAXArray:
         zero_mean = self.zero_mean
-        has_lag = self.has_lag
         has_jitter = self.has_jitter
+        has_lag = self.has_lag
         return self.__call__(zero_mean, has_jitter, has_lag, params)
 
     def __call__(self, zero_mean, has_jitter, has_lag, params) -> JAXArray:
@@ -92,11 +92,11 @@ class MultiVarModel(eqx.Module):
             assume_sorted=True,
         )
 
-        return -gp.log_probability(self.y[inds])
+        return gp.log_probability(self.y[inds])
 
     def sample(self, params):
-        zero_mean = self.zero_mean
         has_lag = self.has_lag
+        zero_mean = self.zero_mean
         has_jitter = self.has_jitter
         return self._sample(zero_mean, has_jitter, has_lag, params)
 
@@ -189,7 +189,7 @@ class UniVarModel(eqx.Module):
             assume_sorted=True,
         )
 
-        return -gp.log_probability(self.y[self.inds])
+        return gp.log_probability(self.y[self.inds])
 
     def sample(self, params):
         zero_mean = self.zero_mean
