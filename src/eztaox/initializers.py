@@ -95,18 +95,18 @@ class CeleriteInit(InitializerBase):
 
 
 class SHOInit(InitializerBase):
-    omegaRange: Sequence[JAXArray | float]
-    qualityRange: Sequence[JAXArray | float]
+    logOmegaRange: Sequence[JAXArray | float]
+    logQualityRange: Sequence[JAXArray | float]
     logSigmaRange: Sequence[JAXArray | float]
 
     def __init__(
         self,
-        omegaRange,
-        qualityRange,
+        logOmegaRange,
+        logQualityRange,
         logSigmaRange,
     ) -> None:
-        self.omegaRange = omegaRange
-        self.qualityRange = qualityRange
+        self.logOmegaRange = logOmegaRange
+        self.logQualityRange = logQualityRange
         self.logSigmaRange = logSigmaRange
 
     def __call__(
@@ -115,8 +115,8 @@ class SHOInit(InitializerBase):
         nSample: int,
     ) -> JAXArray:
         key1, key2, key3 = jax.random.split(key, 3)
-        omega = dist.Uniform(*self.omegaRange).sample(key1, (nSample,))
-        quality = dist.Uniform(*self.qualityRange).sample(key2, (nSample,))
+        omega = dist.Uniform(*self.logOmegaRange).sample(key1, (nSample,))
+        quality = dist.Uniform(*self.logQualityRange).sample(key2, (nSample,))
         sigma = dist.Uniform(*self.logSigmaRange).sample(key3, (nSample,))
 
         return jnp.stack([omega, quality, sigma], axis=-1)
