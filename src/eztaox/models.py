@@ -53,25 +53,22 @@ class MultiVarModel(eqx.Module):
             means = jnp.atleast_1d(params["mean"])
         return means[X[1]]
 
-    def log_prob(self, params) -> JAXArray:
-        zero_mean = self.zero_mean
-        has_jitter = self.has_jitter
-        has_lag = self.has_lag
-        return self.__call__(zero_mean, has_jitter, has_lag, params)
-
-    def __call__(self, zero_mean, has_jitter, has_lag, params) -> JAXArray:
+    @eqx.filter_jit
+    def _build_gp(self, params):
         # log amp + mean
         log_amps = self.amp_transform(params)
-        means = partial(MultiVarModel.mean_func, zero_mean, log_amps.shape[0], params)
+        means = partial(
+            MultiVarModel.mean_func, self.zero_mean, log_amps.shape[0], params
+        )
 
         # time axis transform: t and band are not sorted,
         # inds gives the sorted indices for the new_t
-        X, inds = self.lag_transform(has_lag, log_amps.shape[0], params)
+        X, inds = self.lag_transform(self.has_lag, log_amps.shape[0], params)
         t = X[0]
         band = X[1]
 
         # add jitter to the diagonal
-        if has_jitter is True:
+        if self.has_jitter is True:
             diags = self.diag[inds] + (jnp.exp(params["log_jitter"]) ** 2)[band[inds]]
         else:
             diags = self.diag[inds]
@@ -84,55 +81,26 @@ class MultiVarModel(eqx.Module):
             ),
         )
 
-        gp = GaussianProcess(
-            kernel,
-            (t[inds], band[inds]),
-            diag=diags,
-            mean=means,
-            assume_sorted=True,
+        return (
+            GaussianProcess(
+                kernel,
+                (t[inds], band[inds]),
+                diag=diags,
+                mean=means,
+                assume_sorted=True,
+            ),
+            inds,
         )
 
-        return gp.log_probability(self.y[inds])
+    @eqx.filter_jit
+    def log_prob(self, params) -> JAXArray:
+        gp, inds = self._build_gp(params)
+        return gp.log_probability(y=self.y[inds])
 
+    @eqx.filter_jit
     def sample(self, params):
-        has_lag = self.has_lag
-        zero_mean = self.zero_mean
-        has_jitter = self.has_jitter
-        return self._sample(zero_mean, has_jitter, has_lag, params)
-
-    def _sample(self, zero_mean, has_jitter, has_lag, params):
-        # log amp + mean
-        log_amps = self.amp_transform(params)
-        means = partial(MultiVarModel.mean_func, zero_mean, log_amps.shape[0], params)
-
-        # time axis transform
-        X, inds = self.lag_transform(has_lag, log_amps.shape[0], params)
-        t = X[0]
-        band = X[1]
-
-        # add jitter to the diagonal
-        if has_jitter is True:
-            diags = self.diag[inds] + (jnp.exp(params["log_jitter"]) ** 2)[band[inds]]
-        else:
-            diags = self.diag[inds]
-
-        # def kernel
-        kernel = mb_kernel(
-            amplitudes=jnp.exp(log_amps),
-            kernel=jax.tree.unflatten(
-                self.kernel_def, jnp.exp(params["log_kernel_param"])
-            ),
-        )
-
-        gp = GaussianProcess(
-            kernel,
-            (t[inds], band[inds]),
-            diag=diags,
-            mean=means,
-            assume_sorted=True,
-        )
-
-        return numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[inds])
+        gp, inds = self._build_gp(params)
+        numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[inds])
 
 
 class UniVarModel(eqx.Module):
@@ -143,6 +111,7 @@ class UniVarModel(eqx.Module):
     kernel_def: PyTreeDef
     zero_mean: bool = True
     has_jitter: bool = False
+    # param_PytreeDef: PyTreeDef
 
     def __init__(self, t, y, yerr, kernel, **kwargs) -> None:
         self.t = t
@@ -161,17 +130,13 @@ class UniVarModel(eqx.Module):
             mean = params["mean"]
         return mean
 
-    def log_prob(self, params) -> JAXArray:
-        zero_mean = self.zero_mean
-        has_jitter = self.has_jitter
-        return self.__call__(zero_mean, has_jitter, params)
-
-    def __call__(self, zero_mean, has_jitter, params) -> JAXArray:
-        # log mean
-        mean = partial(UniVarModel.mean_func, zero_mean, params)
+    @eqx.filter_jit
+    def _build_gp(self, params):
+        # params = jax.tree.unflatten(self.param_PytreeDef, param_vals)
+        mean = partial(UniVarModel.mean_func, self.zero_mean, params)
 
         # add jitter to the diagonal
-        if has_jitter is True:
+        if self.has_jitter is True:
             diags = self.yerr**2 + jnp.exp(params["log_jitter"]) ** 2
         else:
             diags = self.yerr**2
@@ -181,7 +146,7 @@ class UniVarModel(eqx.Module):
             self.kernel_def, jnp.exp(params["log_kernel_param"])
         )
 
-        gp = GaussianProcess(
+        return GaussianProcess(
             kernel,
             self.t[self.inds],
             diag=diags[self.inds],
@@ -189,34 +154,15 @@ class UniVarModel(eqx.Module):
             assume_sorted=True,
         )
 
+    @eqx.filter_jit
+    def log_prob(self, params) -> JAXArray:
+        # param_PytreeDef, param_vals = jax.tree.flatten(params)
+        # self.param_PytreeDef = param_PytreeDef
+        # gp = self._build_gp(param_vals)
+        gp = self._build_gp(params)
         return gp.log_probability(self.y[self.inds])
 
+    @eqx.filter_jit
     def sample(self, params):
-        zero_mean = self.zero_mean
-        has_jitter = self.has_jitter
-        return self._sample(zero_mean, has_jitter, params)
-
-    def _sample(self, zero_mean, has_jitter, params):
-        # log mean
-        means = partial(UniVarModel.mean_func, zero_mean, params)
-
-        # add jitter to the diagonal
-        if has_jitter is True:
-            diags = self.yerr**2 + jnp.exp(params["log_jitter"]) ** 2
-        else:
-            diags = self.yerr**2
-
-        # def kernel
-        kernel = jax.tree.unflatten(
-            self.kernel_def, jnp.exp(params["log_kernel_param"])
-        )
-
-        gp = GaussianProcess(
-            kernel,
-            self.t[self.inds],
-            diag=diags[self.inds],
-            mean=means,
-            assume_sorted=True,
-        )
-
+        gp = self._build_gp(params)
         return numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[self.inds])
