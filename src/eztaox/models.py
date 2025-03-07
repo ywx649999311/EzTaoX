@@ -31,13 +31,14 @@ class MultiVarModel(eqx.Module):
         self.has_lag = kwargs.get("has_lag", False)
 
     def lag_transform(
-        self, has_lag, nBand, params
+        self, X, has_lag, params
     ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
         if has_lag is True:
             lags = jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
         else:
+            nBand = params["log_amp_delta"].size + 1
             lags = jnp.zeros(nBand)
-        t, band = self.X
+        t, band = X
         new_t = t - lags[band]
         inds = jnp.argsort(new_t)
         return (new_t, band), inds
@@ -53,7 +54,6 @@ class MultiVarModel(eqx.Module):
             means = jnp.atleast_1d(params["mean"])
         return means[X[1]]
 
-    @eqx.filter_jit
     def _build_gp(self, params):
         # log amp + mean
         log_amps = self.amp_transform(params)
@@ -63,7 +63,7 @@ class MultiVarModel(eqx.Module):
 
         # time axis transform: t and band are not sorted,
         # inds gives the sorted indices for the new_t
-        X, inds = self.lag_transform(self.has_lag, log_amps.shape[0], params)
+        X, inds = self.lag_transform(self.X, self.has_lag, params)
         t = X[0]
         band = X[1]
 
@@ -102,6 +102,17 @@ class MultiVarModel(eqx.Module):
         gp, inds = self._build_gp(params)
         numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[inds])
 
+    @eqx.filter_jit
+    def pred(self, params, X) -> tuple[JAXArray, JAXArray]:
+        # transform time axis
+        new_X, inds = self.lag_transform(X, self.has_lag, params)
+
+        # build gp, cond
+        gp, inds = self._build_gp(params)
+        _, cond = gp.condition(self.y[inds], new_X)
+
+        return cond.loc, jnp.sqrt(cond.variance)
+
 
 class UniVarModel(eqx.Module):
     t: JAXArray = eqx.field(converter=jnp.asarray)
@@ -111,7 +122,6 @@ class UniVarModel(eqx.Module):
     kernel_def: PyTreeDef
     zero_mean: bool = True
     has_jitter: bool = False
-    # param_PytreeDef: PyTreeDef
 
     def __init__(self, t, y, yerr, kernel, **kwargs) -> None:
         self.t = t
@@ -130,9 +140,7 @@ class UniVarModel(eqx.Module):
             mean = params["mean"]
         return mean
 
-    @eqx.filter_jit
-    def _build_gp(self, params):
-        # params = jax.tree.unflatten(self.param_PytreeDef, param_vals)
+    def _build_gp(self, params) -> GaussianProcess:
         mean = partial(UniVarModel.mean_func, self.zero_mean, params)
 
         # add jitter to the diagonal
@@ -156,9 +164,6 @@ class UniVarModel(eqx.Module):
 
     @eqx.filter_jit
     def log_prob(self, params) -> JAXArray:
-        # param_PytreeDef, param_vals = jax.tree.flatten(params)
-        # self.param_PytreeDef = param_PytreeDef
-        # gp = self._build_gp(param_vals)
         gp = self._build_gp(params)
         return gp.log_probability(self.y[self.inds])
 
@@ -166,3 +171,8 @@ class UniVarModel(eqx.Module):
     def sample(self, params):
         gp = self._build_gp(params)
         return numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[self.inds])
+
+    @eqx.filter_jit
+    def pred(self, params, t) -> tuple[JAXArray, JAXArray]:
+        _, cond = self._build_gp(params).condition(self.y[self.inds], t)
+        return cond.loc, jnp.sqrt(cond.variance)

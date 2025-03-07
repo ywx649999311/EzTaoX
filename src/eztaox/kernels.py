@@ -5,7 +5,6 @@ import tinygp
 from tinygp.helpers import JAXArray
 
 
-@tinygp.helpers.dataclass
 class mb_kernel(tinygp.kernels.quasisep.Wrapper):
     amplitudes: jnp.ndarray
 
