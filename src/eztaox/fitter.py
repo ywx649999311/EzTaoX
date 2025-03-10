@@ -8,7 +8,15 @@ import optax
 
 
 def fit(
-    model, optimizer, initSampler, prng_key, nSample, nIter, nBest, jaxoptMethod="SLSQP"
+    model,
+    optimizer,
+    initSampler,
+    prng_key,
+    nSample,
+    nIter,
+    nBest,
+    jaxoptMethod="SLSQP",
+    batch_size=1000,
 ):
     # define loss
     @jax.jit
@@ -28,7 +36,7 @@ def fit(
     initSamples = initSampler(prng_key, nSample)
 
     # adam loops
-    opt_params, losses = jax.vmap(single_loop)(initSamples)
+    opt_params, losses = jax.lax.map(single_loop, initSamples, batch_size=batch_size)
 
     # select top nBest
     loss_idx = jnp.argsort(losses)
@@ -46,6 +54,7 @@ def fit(
     log_prob, param = [], []
     for item in list_of_parmas:
         soln = opt.run(item)
+        # if soln.state.success is np.True_:
         log_prob.append(-soln.state.fun_val)
         param.append(soln.params)
     best_param = param[jnp.argmax(jnp.asarray(log_prob))]

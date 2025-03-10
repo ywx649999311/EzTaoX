@@ -1,11 +1,14 @@
 """Light curve models module."""
+from collections.abc import Callable
 from functools import partial
 
 import equinox as eqx
 import jax
+import jax.flatten_util
 import jax.numpy as jnp
 import numpyro
-from jax.tree_util import PyTreeDef
+
+# from jax.tree_util import PyTreeDef
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
 
@@ -16,7 +19,7 @@ class MultiVarModel(eqx.Module):
     X: JAXArray
     y: JAXArray = eqx.field(converter=jnp.asarray)
     diag: JAXArray = eqx.field(converter=jnp.asarray)
-    kernel_def: PyTreeDef
+    kernel_def: Callable
     zero_mean: bool = True
     has_jitter: bool = False
     has_lag: bool = False
@@ -25,7 +28,7 @@ class MultiVarModel(eqx.Module):
         self.X = X
         self.diag = yerr**2
         self.y = y
-        self.kernel_def = jax.tree_util.tree_flatten(kernel)[1]
+        self.kernel_def = jax.flatten_util.ravel_pytree(kernel)[1]
         self.zero_mean = kwargs.get("zero_mean", True)
         self.has_jitter = kwargs.get("has_jitter", False)
         self.has_lag = kwargs.get("has_lag", False)
@@ -76,9 +79,7 @@ class MultiVarModel(eqx.Module):
         # def kernel
         kernel = mb_kernel(
             amplitudes=jnp.exp(log_amps),
-            kernel=jax.tree.unflatten(
-                self.kernel_def, jnp.exp(params["log_kernel_param"])
-            ),
+            kernel=self.kernel_def(jnp.exp(params["log_kernel_param"])),
         )
 
         return (
@@ -97,7 +98,6 @@ class MultiVarModel(eqx.Module):
         gp, inds = self._build_gp(params)
         return gp.log_probability(y=self.y[inds])
 
-    @eqx.filter_jit
     def sample(self, params):
         gp, inds = self._build_gp(params)
         numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[inds])
@@ -119,7 +119,7 @@ class UniVarModel(eqx.Module):
     y: JAXArray = eqx.field(converter=jnp.asarray)
     yerr: JAXArray = eqx.field(converter=jnp.asarray)
     inds: JAXArray = eqx.field(converter=jnp.asarray)
-    kernel_def: PyTreeDef
+    kernel_def: Callable
     zero_mean: bool = True
     has_jitter: bool = False
 
@@ -128,7 +128,7 @@ class UniVarModel(eqx.Module):
         self.y = y
         self.yerr = yerr
         self.inds = jnp.argsort(t)
-        self.kernel_def = jax.tree_util.tree_flatten(kernel)[1]
+        self.kernel_def = jax.flatten_util.ravel_pytree(kernel)[1]
         self.zero_mean = kwargs.get("zero_mean", True)
         self.has_jitter = kwargs.get("has_jitter", False)
 
@@ -149,11 +149,8 @@ class UniVarModel(eqx.Module):
         else:
             diags = self.yerr**2
 
-        # def kernel
-        kernel = jax.tree.unflatten(
-            self.kernel_def, jnp.exp(params["log_kernel_param"])
-        )
-
+        # re-create kernel
+        kernel = self.kernel_def(jnp.exp(params["log_kernel_param"]))
         return GaussianProcess(
             kernel,
             self.t[self.inds],
@@ -167,7 +164,6 @@ class UniVarModel(eqx.Module):
         gp = self._build_gp(params)
         return gp.log_probability(self.y[self.inds])
 
-    @eqx.filter_jit
     def sample(self, params):
         gp = self._build_gp(params)
         return numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[self.inds])
