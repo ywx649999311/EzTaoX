@@ -14,9 +14,6 @@ dependencies = [
     "jaxlib (<=0.4.31)",
     "jaxopt (>=0.8.3,<0.9.0)",
     "optax (>=0.2.4,<0.3.0)",
-    "numpyro (>=0.17.0,<0.18.0)",
-    "arviz (>=0.20.0,<0.21.0)",
-    "ipywidgets (>=8.1.5,<9.0.0)",
 ]
 
 
@@ -25,6 +22,9 @@ ipykernel = "^6.29.0"
 pre-commit = "^3.5.0"
 ruff = "^0.2.1"
 matplotlib = "^3.3.0"
+numpyro = "^0.17.0"
+arviz = "^0.20.0"
+ipywidgets = "^8.1.5"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^6.0.1"
@@ -32,6 +32,7 @@ pytest-cov = "^2.10.1"
 nox = "^2023.4.22"
 nox-poetry = "^1.0.3"
 poetry-plugin-export = "^1.6.0"
+eztao = {git = "https://github.com/ywx649999311/EzTao.git"}
 
 [tool.jupytext]
 formats = "ipynb,py:percent"
