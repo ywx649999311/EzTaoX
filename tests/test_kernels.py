@@ -7,7 +7,6 @@ import pytest
 from celerite import GP
 from eztao.carma import CARMA_term
 from eztaox.kernels import CARMA
-from matplotlib.pylab import Generator
 from numpy import random as np_random
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
@@ -16,7 +15,7 @@ from tinygp.test_utils import assert_allclose
 
 
 @pytest.fixture
-def random() -> Generator:
+def random():
     return np_random.default_rng(84930)
 
 
@@ -39,9 +38,9 @@ def test_carma(data) -> None:
 
     # CARMA kernels implemented by EzTao
     eztao_carma_kernels = [
-        CARMA_term(jnp.log(jnp.array([0.01])), jnp.log(jnp.array([0.1]))),
-        CARMA_term(jnp.log(jnp.array([1.2, 1.0])), jnp.log(jnp.array([1.0, 3.0]))),
-        CARMA_term(jnp.log(jnp.array([1.1, 0.1])), jnp.log(jnp.array([1.0, 3.0]))),
+        CARMA_term(np.log(np.array([0.01])), np.log(np.array([0.1]))),
+        CARMA_term(np.log(np.array([1.2, 1.0])), np.log(np.array([1.0, 3.0]))),
+        CARMA_term(np.log(np.array([1.1, 0.1])), np.log(np.array([1.0, 3.0]))),
     ]
     # Equivalent Celerite+Exp kernels for validation
     jax_validate_kernels = [
