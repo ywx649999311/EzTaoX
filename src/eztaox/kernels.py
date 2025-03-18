@@ -9,10 +9,11 @@ import jax.numpy as jnp
 import tinygp
 from numpy.typing import NDArray
 from tinygp.helpers import JAXArray
+from tinygp.kernels.stationary import Stationary
 from tinygp.kernels.quasisep import Quasisep
 
 
-class MultibandDelta(tinygp.kernels.quasisep.Wrapper):
+class MultibandDeltaQuasi(tinygp.kernels.quasisep.Wrapper):
     amplitudes: jnp.ndarray
 
     def coord_to_sortable(self, X) -> JAXArray:
@@ -20,6 +21,17 @@ class MultibandDelta(tinygp.kernels.quasisep.Wrapper):
 
     def observation_model(self, X) -> JAXArray:
         return self.amplitudes[X[1]] * self.kernel.observation_model(X[0])
+
+
+class MultibandDelta(tinygp.kernels.Kernel):
+    amplitudes: jnp.ndarray
+    kernel: tinygp.kernels.Kernel
+
+    def coord_to_sortable(self, X) -> JAXArray:
+        return X[0]
+
+    def evaluate(self, X1, X2) -> JAXArray:
+        return self.amplitudes[X1[1]] * self.amplitudes[X2[1]] * self.kernel.evaluate(X1[0], X2[0])
 
 
 class MultibandDecorrelation(tinygp.kernels.Kernel):
@@ -69,9 +81,7 @@ class MultibandFFT(tinygp.kernels.Kernel):
 
     def evaluate(self, X1, X2) -> JAXArray:
 
-        _transfer_function = jax.tree_util.Partial(self.transfer_function, arg=1)
-
-        t_eval = jnp.linspace(-100, 100, 1000)
+        t_eval = jnp.linspace(-1000, 1000, 1000)
         dt = t_eval[1] - t_eval[0]
         kernel_eval = self.kernel(t_eval, jnp.array([0])).T[0]
 
@@ -82,12 +92,21 @@ class MultibandFFT(tinygp.kernels.Kernel):
         #return self.amplitudes[b1] * self.amplitudes[b2] * self.kernel.evaluate(t1, t2)
 
         # Equation 8 in https://ui.adsabs.harvard.edu/abs/2011ApJ...735...80Z/abstract
-        Psi1 = _transfer_function(t_eval, b1, **self.transfer_function_params)
-        Psi2 = _transfer_function(t_eval, b2, **self.transfer_function_params)
+        Psi1 = self.transfer_function(t_eval, b1, **self.transfer_function_params)
+        Psi2 = self.transfer_function(t_eval, b2, **self.transfer_function_params)
         K1 = dt*jax.scipy.signal.fftconvolve(Psi1, kernel_eval, mode='same')
         K2 = dt*jax.scipy.signal.fftconvolve(Psi2, K1, mode='same')
 
         return self.amplitudes[b1] * self.amplitudes[b2] * jnp.interp(t1 - t2, t_eval, kernel_eval)
+
+    def evaluate_diag(self, X: JAXArray) -> JAXArray:
+        """Evaluate the kernel on its diagonal
+
+        The default implementation simply calls :func:`Kernel.evaluate` with
+        ``X`` as both arguments, but subclasses can use this to make diagonal
+        calcuations more efficient.
+        """
+        return self.evaluate(X, X)
 
 
 class CARMA(Quasisep):
