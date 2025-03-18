@@ -99,15 +99,6 @@ class MultibandFFT(tinygp.kernels.Kernel):
 
         return self.amplitudes[b1] * self.amplitudes[b2] * jnp.interp(t1 - t2, t_eval, kernel_eval)
 
-    def evaluate_diag(self, X: JAXArray) -> JAXArray:
-        """Evaluate the kernel on its diagonal
-
-        The default implementation simply calls :func:`Kernel.evaluate` with
-        ``X`` as both arguments, but subclasses can use this to make diagonal
-        calcuations more efficient.
-        """
-        return self.evaluate(X, X)
-
 
 class CARMA(Quasisep):
     r"""A continuous-time autoregressive moving average (CARMA) process kernel
