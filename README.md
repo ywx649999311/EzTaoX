@@ -13,5 +13,5 @@ pyenv shell 3.10 3.11 3.12 3.13
 ```
 1. Run tests
 ```
-poetry run nox -s tests
+nox -s tests
 ```

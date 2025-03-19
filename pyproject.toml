@@ -31,9 +31,9 @@ pytest = "^8.0.0"
 pytest-cov = "^6.0.0"
 nox = "^2025.0.0"
 nox-poetry = "^1.2.0"
-poetry-plugin-export = "^1.8.0"
 celerite = "^0.4.0"
 eztao = {git = "https://github.com/ywx649999311/EzTao.git"}
+
 
 [tool.poetry.group.docs.dependencies]
 toml = "^0.10.2"
@@ -65,3 +65,6 @@ quote-style = "double"  # Matches Black's double-quote style
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.requires-plugins]
+poetry-plugin-export = ">=1.9"
