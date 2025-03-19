@@ -12,21 +12,30 @@ from numpy.typing import NDArray
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
 
-from eztaox.kernels import MultibandDeltaQuasi, MultibandDelta, MultibandFFT, MultibandDecorrelation
+from eztaox.kernels import (
+    MultibandFFT,
+    MultibandFullRank,
+    MultibandLowRank,
+    MultibandLowRankQuasisep,
+)
 
 
 class MultiVarModel(eqx.Module):
     """
-    MultiVarModel is a class for modeling multivariate time series data using Gaussian Processes.
+    MultiVarModel is a class for modeling multivariate time series data using
+    Gaussian Processes.
 
     Attributes:
         X (JAXArray): The input features, consisting of time and band indices.
         y (JAXArray): The observed data, typically magnitudes.
-        diag (JAXArray): The diagonal elements of the covariance matrix, typically representing the variance of the observations.
+        diag (JAXArray): The diagonal elements of the covariance matrix
+        typically representing the variance of the observations.
         kernel_def (Callable): The kernel function used in the Gaussian Process.
         zero_mean (bool): Whether to use a zero mean function. Default is True.
-        has_jitter (bool): Whether to add jitter to the diagonal of the covariance matrix. Default is False.
-        has_lag (bool): Whether to apply a lag transformation to the time axis. Default is False.
+        has_jitter (bool): Whether to add jitter to the diagonal of the
+        covariance matrix. Default is False.
+        has_lag (bool): Whether to apply a lag transformation to the time axis.
+        Default is False.
 
     Methods:
         __init__(self, X, y, yerr, kernel, **kwargs):
@@ -53,6 +62,7 @@ class MultiVarModel(eqx.Module):
         pred(self, params, X):
             Makes predictions using the Gaussian Process model for the given input features.
     """
+
     X: JAXArray
     y: JAXArray = eqx.field(converter=jnp.asarray)
     diag: JAXArray = eqx.field(converter=jnp.asarray)
@@ -69,11 +79,10 @@ class MultiVarModel(eqx.Module):
         kernel: tinygp.kernels.quasisep.Quasisep,
         **kwargs,
     ) -> None:
-
         if not isinstance(kernel, tinygp.kernels.quasisep.Quasisep):
             raise TypeError("This model only takes quasiseperable kernels.")
 
-        self.X = (jnp.asarray(X[0]), jnp.asarray(X[1], dtype=int)) 
+        self.X = (jnp.asarray(X[0]), jnp.asarray(X[1], dtype=int))
         self.diag = yerr**2
         self.y = y
         self.kernel_def = jax.flatten_util.ravel_pytree(kernel)[1]
@@ -129,7 +138,7 @@ class MultiVarModel(eqx.Module):
             diags = self.diag[inds]
 
         # def kernel
-        kernel = MultibandDeltaQuasi(
+        kernel = MultibandLowRankQuasisep(
             amplitudes=jnp.exp(log_amps),
             kernel=self.kernel_def(jnp.exp(params["log_kernel_param"])),
         )
@@ -170,7 +179,8 @@ class MultiVarModel(eqx.Module):
 
 class MultiVarModelFFT(MultiVarModel):
     """
-    MultiVarModelFFT is a subclass of MultiVarModel for modeling multivariate time series data using Gaussian Processes with FFT-based transfer functions.
+    MultiVarModelFFT is a subclass of MultiVarModel for modeling multivariate
+    time series data using Gaussian Processes with FFT-based transfer functions.
 
     This class extends the MultiVarModel by adding support for decorrelation matrices and user-defined transfer functions.
     The transfer_function needs to have the form:
@@ -191,6 +201,7 @@ class MultiVarModelFFT(MultiVarModel):
         _build_gp(self, params):
             Builds the Gaussian Process model with the given parameters, including the transfer function and decorrelation matrix if specified.
     """
+
     has_decorrelation: bool = False
     transfer_function: None | Callable = None
 
@@ -202,7 +213,7 @@ class MultiVarModelFFT(MultiVarModel):
         kernel: tinygp.kernels.quasisep.Quasisep,
         **kwargs,
     ) -> None:
-        self.X = (jnp.asarray(X[0]), jnp.asarray(X[1], dtype=int)) 
+        self.X = (jnp.asarray(X[0]), jnp.asarray(X[1], dtype=int))
         self.diag = yerr**2
         self.y = y
         self.kernel_def = jax.flatten_util.ravel_pytree(kernel)[1]
@@ -235,7 +246,7 @@ class MultiVarModelFFT(MultiVarModel):
 
         # def kernel
         if self.transfer_function is None:
-            kernel = MultibandDelta(
+            kernel = MultibandLowRank(
                 amplitudes=jnp.exp(log_amps),
                 kernel=self.kernel_def(jnp.exp(params["log_kernel_param"])),
             )
@@ -245,13 +256,15 @@ class MultiVarModelFFT(MultiVarModel):
                 amplitudes=jnp.exp(log_amps),
                 kernel=self.kernel_def(jnp.exp(params["log_kernel_param"])),
                 transfer_function=jax.tree_util.Partial(self.transfer_function),
-                **params
+                **params,
             )
         # add the decorrelation matrix
         if self.has_decorrelation is True:
             nBand = params["log_amp_delta"].size + 1
             log_diagonal = jnp.zeros(nBand)
-            kernel = MultibandDecorrelation(kernel, jnp.exp(log_diagonal), params["off_diagonal"])
+            kernel = MultibandFullRank(
+                kernel, jnp.exp(log_diagonal), params["off_diagonal"]
+            )
 
         return (
             GaussianProcess(
@@ -296,6 +309,7 @@ class UniVarModel(eqx.Module):
         pred(self, params, t):
             Makes predictions using the Gaussian Process model for the given time series data.
     """
+
     t: JAXArray = eqx.field(converter=jnp.asarray)
     y: JAXArray = eqx.field(converter=jnp.asarray)
     yerr: JAXArray = eqx.field(converter=jnp.asarray)
