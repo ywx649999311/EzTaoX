@@ -16,46 +16,29 @@ from eztaox.kernels import direct, quasisep
 
 
 class MultiVarModel(eqx.Module):
-    """
-    MultiVarModel is a class for modeling multivariate time series data using
-    Gaussian Processes.
+    """An interface for modeling multivariate/mutli-band time series using
+    Gaussian Process (GP).
 
-    Attributes:
-        X (JAXArray): The input features, consisting of time and band indices.
-        y (JAXArray): The observed data, typically magnitudes.
-        diag (JAXArray): The diagonal elements of the covariance matrix
-        typically representing the variance of the observations.
-        kernel_def (Callable): The kernel function used in the Gaussian Process.
-        zero_mean (bool): Whether to use a zero mean function. Default is True.
-        has_jitter (bool): Whether to add jitter to the diagonal of the
-        covariance matrix. Default is False.
-        has_lag (bool): Whether to apply a lag transformation to the time axis.
-        Default is False.
+    This interface only takes GP kernels that can be evaluated using the
+    scalable method of `DFM+17 <https://arxiv.org/abs/1703.09710>`. This
+    interface allows fitting for the mean of the time series, additional
+    variance to the uncertainty, and time delays between each uni-variate/
+    single-band time series.
 
-    Methods:
-        __init__(self, X, y, yerr, kernel, **kwargs):
-            Initializes the MultiVarModel with the given data, kernel, and optional parameters.
+    Args:
+        X (JAXArray): Input data containing time and band indices as a tuple.
+        y (JAXArray | NDArray): Observed data values.
+        yerr (JAXArray | NDArray): Observational errors.
+        kernel (quasisep.Quasisep): A GP kernel from kernels.quasisep.
+        **kwargs: Additional keyword arguments.
+            zero_mean (bool): If True, assumes zero-mean GP. Defaults to True.
+            has_jitter (bool): If True, assumes the input observational erros
+                are underestimated. Defaults to False.
+            has_lag (bool): If True, assumes time delays between time series in
+                each band. Defaults to False.
 
-        lag_transform(self, X, has_lag, params):
-            Applies a lag transformation to the time axis if has_lag is True.
-
-        amp_transform(self, params):
-            Transforms the amplitude parameters.
-
-        mean_func(zero_mean, nBand, params, X):
-            Computes the mean function for the Gaussian Process.
-
-        _build_gp(self, params):
-            Builds the Gaussian Process model with the given parameters.
-
-        log_prob(self, params):
-            Computes the log probability of the observed data under the Gaussian Process model.
-
-        sample(self, params):
-            Samples from the Gaussian Process model using the given parameters.
-
-        pred(self, params, X):
-            Makes predictions using the Gaussian Process model for the given input features.
+    Raises:
+        TypeError: If kernel is not one from kernels.quasisep.
     """
 
     X: JAXArray
@@ -151,10 +134,23 @@ class MultiVarModel(eqx.Module):
 
     @eqx.filter_jit
     def log_prob(self, params: dict[str, JAXArray]) -> JAXArray:
+        """Calculate the log probability of the input parameters.
+
+        Args:
+            params (dict[str, JAXArray]): Model parameters.
+
+        Returns:
+            JAXArray: Log probability of the input parameters.
+        """
         gp, inds = self._build_gp(params)
         return gp.log_probability(y=self.y[inds])
 
     def sample(self, params: dict[str, JAXArray]) -> None:
+        """A convience function for intergrating with numpyro for MCMC sampling.
+
+        Args:
+            params (dict[str, JAXArray]): Model parameters.
+        """
         gp, inds = self._build_gp(params)
         numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[inds])
 
@@ -162,6 +158,17 @@ class MultiVarModel(eqx.Module):
     def pred(
         self, params: dict[str, JAXArray], X: JAXArray
     ) -> tuple[JAXArray, JAXArray]:
+        """Make conditional GP prediction.
+
+        Args:
+            params (dict[str, JAXArray]): A dictionary containing model
+                parameters.
+            X (JAXArray): The time and band information for creating the
+                conditional GP prediction.
+
+        Returns:
+            tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and
+        """
         # transform time axis
         new_X, inds = self.lag_transform(X, self.has_lag, params)
 
@@ -173,11 +180,12 @@ class MultiVarModel(eqx.Module):
 
 
 class MultiVarModelFFT(MultiVarModel):
-    """
-    MultiVarModelFFT is a subclass of MultiVarModel for modeling multivariate
+    """MultiVarModelFFT is a subclass of MultiVarModel for modeling multivariate
     time series data using Gaussian Processes with FFT-based transfer functions.
 
-    This class extends the MultiVarModel by adding support for decorrelation matrices and user-defined transfer functions.
+    This class extends the MultiVarModel by adding support for full-rank
+    cross-band covariance matrices and user-defined transfer functions.
+
     The transfer_function needs to have the form:
     def f(X, **kwargs):
         # Some calculation
@@ -185,16 +193,11 @@ class MultiVarModelFFT(MultiVarModel):
         return p
     See transfer_functions.py module
 
-    Attributes:
-        has_decorrelation (bool): Whether to add a decorrelation matrix to the kernel. Default is False.
-        transfer_function (None | Callable): User-defined transfer function to use. Default is None.
-
-    Methods:
-        __init__(self, X, y, yerr, kernel, **kwargs):
-            Initializes the MultiVarModelFFT with the given data, kernel, and optional parameters.
-
-        _build_gp(self, params):
-            Builds the Gaussian Process model with the given parameters, including the transfer function and decorrelation matrix if specified.
+    Args:
+        has_decorrelation (bool): Whether to add a decorrelation matrix to the
+            kernel. Default is False.
+        transfer_function (None | Callable): User-defined transfer function to
+            use. Default is None.
     """
 
     has_decorrelation: bool = False
@@ -273,36 +276,26 @@ class MultiVarModelFFT(MultiVarModel):
 
 
 class UniVarModel(eqx.Module):
-    """
-    UniVarModel is a class for modeling univariate time series data using Gaussian Processes.
+    """An interface for modeling univariate/single-band time series using
+    Gaussian Process (GP).
 
-    Attributes:
+    This interface only takes GP kernels that can be evaluated using the
+    scalable method of `DFM+17 <https://arxiv.org/abs/1703.09710>`. This
+    interface allows fitting for the mean of the time series and additional
+    variance to the uncertainty.
+
+    Args:
         t (JAXArray): The time points of the observed data.
         y (JAXArray): The observed data.
-        yerr (JAXArray): The errors of the observed data.
-        inds (JAXArray): The indices that sort the time points.
-        kernel_def (Callable): The kernel function used in the Gaussian Process.
-        zero_mean (bool): Whether to use a zero mean function. Default is True.
-        has_jitter (bool): Whether to add jitter to the diagonal of the covariance matrix. Default is False.
+        yerr (JAXArray): Observational errors.
+        kernel (quasisep.Quasisep): A GP kernel from kernels.quasisep.
+        **kwargs: Additional keyword arguments.
+            zero_mean (bool): If True, assumes zero-mean GP. Defaults to True.
+            has_jitter (bool): If True, assumes the input observational erros
+                are underestimated. Defaults to False.
 
-    Methods:
-        __init__(self, t, y, yerr, kernel, **kwargs):
-            Initializes the UniVarModel with the given time series data, kernel, and optional parameters.
-
-        mean_func(zero_mean, params, X):
-            Computes the mean function for the Gaussian Process.
-
-        _build_gp(self, params):
-            Builds the Gaussian Process model with the given parameters.
-
-        log_prob(self, params):
-            Computes the log probability of the observed data under the Gaussian Process model.
-
-        sample(self, params):
-            Samples from the Gaussian Process model using the given parameters.
-
-        pred(self, params, t):
-            Makes predictions using the Gaussian Process model for the given time series data.
+    Raises:
+        TypeError: If kernel is not one from kernels.quasisep.
     """
 
     t: JAXArray = eqx.field(converter=jnp.asarray)
@@ -360,10 +353,23 @@ class UniVarModel(eqx.Module):
 
     @eqx.filter_jit
     def log_prob(self, params: dict[str, JAXArray]) -> JAXArray:
+        """Calculate the log probability of the input parameters.
+
+        Args:
+            params (dict[str, JAXArray]): Model parameters.
+
+        Returns:
+            JAXArray: Log probability of the input parameters.
+        """
         gp = self._build_gp(params)
         return gp.log_probability(self.y[self.inds])
 
     def sample(self, params: dict[str, JAXArray]) -> None:
+        """A convience function for intergrating with numpyro for MCMC sampling.
+
+        Args:
+            params (dict[str, JAXArray]): Model parameters.
+        """
         gp = self._build_gp(params)
         numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[self.inds])
 
@@ -371,5 +377,16 @@ class UniVarModel(eqx.Module):
     def pred(
         self, params: dict[str, JAXArray], t: JAXArray | NDArray
     ) -> tuple[JAXArray, JAXArray]:
+        """Make conditional GP prediction.
+
+        Args:
+            params (dict[str, JAXArray]): A dictionary containing model
+                parameters.
+            X (JAXArray): The time and band information for creating the
+                conditional GP prediction.
+
+        Returns:
+            tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and
+        """
         _, cond = self._build_gp(params).condition(self.y[self.inds], t)
         return cond.loc, jnp.sqrt(cond.variance)
