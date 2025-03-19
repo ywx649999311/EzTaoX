@@ -28,6 +28,7 @@ def fit(
     def loss(params) -> JAXArray:
         return -model.log_prob(params)
 
+
     def single_loop(params) -> tuple[dict[str, JAXArray], JAXArray]:
         opt_state = optimizer.init(params)
         for _ in range(nIter):
@@ -39,6 +40,15 @@ def fit(
 
     # init samples
     initSamples = initSampler(prng_key, nSample)
+
+    if nSample == 1:
+        print('Simple minimizer')
+        # jaxopt optimize
+        opt = jaxopt.ScipyMinimize(fun=loss, method=jaxoptMethod)
+        soln = opt.run(initSamples)
+        best_param = soln.params
+
+        return best_param, loss(best_param)
 
     # adam loops
     opt_params, losses = jax.lax.map(single_loop, initSamples, batch_size=batch_size)
