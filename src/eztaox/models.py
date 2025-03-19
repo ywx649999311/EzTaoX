@@ -12,12 +12,7 @@ from numpy.typing import NDArray
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
 
-from eztaox.kernels import (
-    MultibandFFT,
-    MultibandFullRank,
-    MultibandLowRank,
-    MultibandLowRankQuasisep,
-)
+from eztaox.kernels import direct, quasisep
 
 
 class MultiVarModel(eqx.Module):
@@ -76,10 +71,10 @@ class MultiVarModel(eqx.Module):
         X: JAXArray,
         y: JAXArray | NDArray,
         yerr: JAXArray | NDArray,
-        kernel: tinygp.kernels.quasisep.Quasisep,
+        kernel: quasisep.Quasisep,
         **kwargs,
     ) -> None:
-        if not isinstance(kernel, tinygp.kernels.quasisep.Quasisep):
+        if not isinstance(kernel, quasisep.Quasisep):
             raise TypeError("This model only takes quasiseperable kernels.")
 
         self.X = (jnp.asarray(X[0]), jnp.asarray(X[1], dtype=int))
@@ -138,7 +133,7 @@ class MultiVarModel(eqx.Module):
             diags = self.diag[inds]
 
         # def kernel
-        kernel = MultibandLowRankQuasisep(
+        kernel = quasisep.MultibandLowRank(
             amplitudes=jnp.exp(log_amps),
             kernel=self.kernel_def(jnp.exp(params["log_kernel_param"])),
         )
@@ -210,7 +205,7 @@ class MultiVarModelFFT(MultiVarModel):
         X: JAXArray,
         y: JAXArray | NDArray,
         yerr: JAXArray | NDArray,
-        kernel: tinygp.kernels.quasisep.Quasisep,
+        kernel: tinygp.kernels.Kernel,
         **kwargs,
     ) -> None:
         self.X = (jnp.asarray(X[0]), jnp.asarray(X[1], dtype=int))
@@ -246,13 +241,13 @@ class MultiVarModelFFT(MultiVarModel):
 
         # def kernel
         if self.transfer_function is None:
-            kernel = MultibandLowRank(
+            kernel = direct.MultibandLowRank(
                 amplitudes=jnp.exp(log_amps),
                 kernel=self.kernel_def(jnp.exp(params["log_kernel_param"])),
             )
         # full transfer function calculation
         else:
-            kernel = MultibandFFT(
+            kernel = direct.MultibandFFT(
                 amplitudes=jnp.exp(log_amps),
                 kernel=self.kernel_def(jnp.exp(params["log_kernel_param"])),
                 transfer_function=jax.tree_util.Partial(self.transfer_function),
@@ -262,7 +257,7 @@ class MultiVarModelFFT(MultiVarModel):
         if self.has_decorrelation is True:
             nBand = params["log_amp_delta"].size + 1
             log_diagonal = jnp.zeros(nBand)
-            kernel = MultibandFullRank(
+            kernel = direct.MultibandFullRank(
                 kernel, jnp.exp(log_diagonal), params["off_diagonal"]
             )
 
@@ -323,10 +318,10 @@ class UniVarModel(eqx.Module):
         t: JAXArray | NDArray,
         y: JAXArray | NDArray,
         yerr: JAXArray | NDArray,
-        kernel: tinygp.kernels.quasisep.Quasisep,
+        kernel: quasisep.Quasisep,
         **kwargs,
     ) -> None:
-        if not isinstance(kernel, tinygp.kernels.quasisep.Quasisep):
+        if not isinstance(kernel, quasisep.Quasisep):
             raise TypeError("This model only takes quasiseperable kernels.")
         self.t = t
         self.y = y

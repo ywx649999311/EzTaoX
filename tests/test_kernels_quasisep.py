@@ -6,11 +6,10 @@ import numpy as np
 import pytest
 from celerite import GP
 from eztao.carma import CARMA_term
-from eztaox.kernels import CARMA
+from eztaox.kernels import quasisep
 from numpy import random as np_random
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
-from tinygp.kernels import quasisep
 from tinygp.test_utils import assert_allclose
 
 
@@ -31,9 +30,9 @@ def test_carma(data) -> None:
     x, y, _ = data
     # CARMA kernels implemented using JAX
     jax_carma_kernels = [
-        CARMA(alpha=jnp.array([0.01]), beta=jnp.array([0.1])),
-        CARMA(alpha=jnp.array([1.0, 1.2]), beta=jnp.array([1.0, 3.0])),
-        CARMA(alpha=jnp.array([0.1, 1.1]), beta=jnp.array([1.0, 3.0])),
+        quasisep.CARMA(alpha=jnp.array([0.01]), beta=jnp.array([0.1])),
+        quasisep.CARMA(alpha=jnp.array([1.0, 1.2]), beta=jnp.array([1.0, 3.0])),
+        quasisep.CARMA(alpha=jnp.array([0.1, 1.1]), beta=jnp.array([1.0, 3.0])),
     ]
 
     # CARMA kernels implemented by EzTao

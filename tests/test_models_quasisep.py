@@ -4,12 +4,11 @@ import jax
 import jax.flatten_util
 import jax.numpy as jnp
 import pytest
-from eztaox.kernels import MultibandLowRankQuasisep
+from eztaox.kernels import quasisep
 from eztaox.models import MultiVarModel, UniVarModel
 from numpy import random as np_random
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
-from tinygp.kernels import quasisep
 from tinygp.test_utils import assert_allclose
 
 
@@ -115,7 +114,7 @@ def test_multivar(data, kernel, random) -> None:
 
     # native tinygp gp
     gp1 = GaussianProcess(
-        MultibandLowRankQuasisep(
+        quasisep.MultibandLowRank(
             amplitudes=jnp.exp(
                 jnp.insert(jnp.atleast_1d(model_param["log_amp_delta"]), 0, 0.0)
             ),
