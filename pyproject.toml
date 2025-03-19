@@ -37,7 +37,7 @@ eztao = {git = "https://github.com/ywx649999311/EzTao.git"}
 
 [tool.poetry.group.docs.dependencies]
 toml = "^0.10.2"
-Sphinx = "^8.2.0"
+Sphinx = "^8.0.0"
 nbsphinx = "^0.9.0"
 sphinx-copybutton = "^0.5.2"
 
