@@ -69,6 +69,10 @@ class MultiVarModel(eqx.Module):
         kernel: tinygp.kernels.quasisep.Quasisep,
         **kwargs,
     ) -> None:
+
+        if not isinstance(kernel, tinygp.kernels.quasisep.Quasisep):
+            raise TypeError("This model only takes quasiseperable kernels.")
+
         self.X = (jnp.asarray(X[0]), jnp.asarray(X[1], dtype=int)) 
         self.diag = yerr**2
         self.y = y
@@ -308,6 +312,8 @@ class UniVarModel(eqx.Module):
         kernel: tinygp.kernels.quasisep.Quasisep,
         **kwargs,
     ) -> None:
+        if not isinstance(kernel, tinygp.kernels.quasisep.Quasisep):
+            raise TypeError("This model only takes quasiseperable kernels.")
         self.t = t
         self.y = y
         self.yerr = yerr
