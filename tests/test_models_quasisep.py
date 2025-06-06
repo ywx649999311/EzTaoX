@@ -77,9 +77,11 @@ def test_univar(data, kernel, random) -> None:
     m = UniVarModel(
         x, y, jnp.ones_like(x) * 0.1, kernel, zero_mean=False, has_jitter=True
     )
-    gp2 = m._build_gp(model_param)
+    gp2, _ = m._build_gp(model_param)
 
+    # check consistency for log probability and grad of log probability
     assert_allclose(gp1.log_probability(y), gp2.log_probability(y))
+    assert_allclose(jax.grad(gp1.log_probability)(y), jax.grad(gp2.log_probability)(y))
 
 
 def test_univar_jit_grad(data, kernel, random) -> None:
@@ -107,17 +109,18 @@ def test_multivar(data, kernel, random) -> None:
 
     model_param = {
         "log_kernel_param": jnp.log(jax.flatten_util.ravel_pytree(kernel)[0]),
-        "log_amp_delta": jnp.array(random.uniform(-1, 1, 2)),
+        "log_amp_scale": jnp.array(random.uniform(-1, 1, 2)),
         "mean": jnp.array(random.uniform(-1, 1, 3)),
         "log_jitter": jnp.array(random.uniform(-20, 5, 3)),
     }
 
     # native tinygp gp
+    amplitudes = jnp.exp(
+        jnp.insert(jnp.atleast_1d(model_param["log_amp_scale"]), 0, 0.0)
+    )
     gp1 = GaussianProcess(
         quasisep.MultibandLowRank(
-            amplitudes=jnp.exp(
-                jnp.insert(jnp.atleast_1d(model_param["log_amp_delta"]), 0, 0.0)
-            ),
+            params={"amplitudes": amplitudes},
             kernel=kernel,
         ),
         (x, b),
@@ -128,12 +131,17 @@ def test_multivar(data, kernel, random) -> None:
 
     # extaox gp
     m = MultiVarModel(
-        (x, b), y, jnp.ones_like(x) * 0.1, kernel, zero_mean=False, has_jitter=True
+        (x, b), y, jnp.ones_like(x) * 0.1, kernel, 3, zero_mean=False, has_jitter=True
     )
     gp2, _ = m._build_gp(model_param)
 
+    # check consistency for log probability and grad of log probability
     assert_allclose(
         gp1.log_probability(y - model_param["mean"][b]), gp2.log_probability(y)
+    )
+    assert_allclose(
+        jax.grad(gp1.log_probability)(y - model_param["mean"][b]),
+        jax.grad(gp2.log_probability)(y),
     )
 
 
@@ -142,14 +150,14 @@ def test_multivar_jit_grad(data, kernel, random) -> None:
 
     model_param = {
         "log_kernel_param": jnp.log(jax.flatten_util.ravel_pytree(kernel)[0]),
-        "log_amp_delta": jnp.array(random.uniform(-1, 1, 2)),
+        "log_amp_scale": jnp.array(random.uniform(-1, 1, 2)),
         "mean": jnp.array(random.uniform(-1, 1, 3)),
         "log_jitter": jnp.array(random.uniform(-20, 5, 3)),
     }
 
     # extaox gp
     m = MultiVarModel(
-        (x, b), y, jnp.ones_like(x) * 0.1, kernel, zero_mean=False, has_jitter=True
+        (x, b), y, jnp.ones_like(x) * 0.1, kernel, 3, zero_mean=False, has_jitter=True
     )
 
     @jax.jit
@@ -160,33 +168,33 @@ def test_multivar_jit_grad(data, kernel, random) -> None:
     jax.grad(loss)(model_param)
 
 
-def test_lag_transform(data, random) -> None:
+def test_lag_transform(data, kernel, random) -> None:
     x, y, b = data
 
     # randomize the order -> test if eztao model does the sorting
     x_unsort = random.choice(x, len(x))
 
-    test_kernel = quasisep.Matern32(sigma=1.8, scale=1.5)
+    # model
     model_param = {
-        "log_kernel_param": jnp.log(jax.flatten_util.ravel_pytree(test_kernel)[0]),
-        "log_amp_delta": jnp.array(random.uniform(-1, 1, 2)),
+        "log_kernel_param": jnp.log(jax.flatten_util.ravel_pytree(kernel)[0]),
+        "log_amp_scale": jnp.array(random.uniform(-1, 1, 2)),
         "mean": jnp.array(random.uniform(-1, 1, 3)),
         "log_jitter": jnp.array(random.uniform(-20, 5, 3)),
         "lag": jnp.array(random.uniform(-10, 100, 2)),
     }
-
-    # model
     m = MultiVarModel(
         (x_unsort, b),
         y,
         jnp.ones_like(x) * 0.1,
-        test_kernel,
+        kernel,
+        3,
         zero_mean=False,
         has_jitter=True,
         has_lag=True,
     )
 
-    new_X, inds = m.lag_transform((x_unsort, b), True, model_param)
+    # lag_transform using model function
+    new_X, inds = m.lag_transform(True, model_param, (x_unsort, b))
 
     # correct time shift
     assert_allclose(new_X[0][b == 1] + model_param["lag"][0], x_unsort[b == 1])
