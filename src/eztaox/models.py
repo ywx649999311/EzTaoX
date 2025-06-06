@@ -1,6 +1,7 @@
 """Light curve models module."""
 from collections.abc import Callable
 from functools import partial
+from typing import Optional
 
 import equinox as eqx
 import jax
@@ -41,96 +42,91 @@ class MultiVarModel(eqx.Module):
         TypeError: If kernel is not one from kernels.quasisep.
     """
 
-    X: JAXArray
+    X: tuple[JAXArray, JAXArray]
     y: JAXArray = eqx.field(converter=jnp.asarray)
     diag: JAXArray = eqx.field(converter=jnp.asarray)
-    kernel_def: Callable
-    zero_mean: bool = True
-    has_jitter: bool = False
-    has_lag: bool = False
+    base_kernel_def: Callable
+    multiband_kernel: quasisep.Wrapper
+    nBand: int
+    mean_func: Callable | None
+    amp_scale_func: Callable | None
+    lag_func: Callable | None
+    zero_mean: bool
+    has_jitter: bool
+    has_lag: bool
 
     def __init__(
         self,
-        X: JAXArray,
+        X: tuple[JAXArray | NDArray, JAXArray | NDArray],
         y: JAXArray | NDArray,
         yerr: JAXArray | NDArray,
-        kernel: quasisep.Quasisep,
+        base_kernel: quasisep.Quasisep,
+        nBand: int,
+        multiband_kernel: quasisep.Wrapper | None = quasisep.MultibandLowRank,
+        mean_func: Callable | None = None,
+        amp_scale_func: Callable | None = None,
+        lag_func: Callable | None = None,
         **kwargs,
     ) -> None:
-        if not isinstance(kernel, quasisep.Quasisep):
+        if not isinstance(base_kernel, quasisep.Quasisep):
             raise TypeError("This model only takes quasiseperable kernels.")
 
-        self.X = (jnp.asarray(X[0]), jnp.asarray(X[1], dtype=int))
-        self.diag = yerr**2
-        self.y = y
-        self.kernel_def = jax.flatten_util.ravel_pytree(kernel)[1]
+        # format inputs
+        t = jnp.asarray(X[0])
+        inds = jnp.argsort(t)
+        band = jnp.asarray(X[1], dtype=int)
+
+        # assign attributes
+        self.X = (t[inds], band[inds])
+        self.diag = (yerr**2)[inds]
+        self.y = y[inds]
+        self.base_kernel_def = jax.flatten_util.ravel_pytree(base_kernel)[1]
+        self.nBand = nBand
+
+        # assign callables/classes
+        self.multiband_kernel = multiband_kernel
+        self.mean_func = mean_func
+        self.amp_scale_func = amp_scale_func
+        self.lag_func = lag_func
+
+        # assign other attributes
         self.zero_mean = kwargs.get("zero_mean", True)
         self.has_jitter = kwargs.get("has_jitter", False)
         self.has_lag = kwargs.get("has_lag", False)
 
-    def lag_transform(
-        self, X: JAXArray, has_lag: bool, params: dict[str, JAXArray]
-    ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
-        if has_lag is True:
-            lags = jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
+    def get_mean(
+        self, zero_mean: bool, params: dict[str, JAXArray], X: JAXArray
+    ) -> JAXArray:
+        """Mean func for the Gaussian Process."""
+        if zero_mean is True:
+            mean = 0.0
+        elif self.mean_func is not None:
+            mean = self.mean_func(params, X)
         else:
-            nBand = params["log_amp_delta"].size + 1
-            lags = jnp.zeros(nBand)
+            mean = self._default_mean_func(params, X)
+        return mean
+
+    def get_amp_scale(self, params: dict[str, JAXArray]) -> JAXArray:
+        """Amplitude transform for the Gaussian Process."""
+        if self.amp_scale_func is not None:
+            return self.amp_scale_func(params)
+        return self._default_amp_scale_func(params)
+
+    def lag_transform(
+        self, has_lag: bool, params: dict[str, JAXArray], X: JAXArray
+    ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
+        """Lag transform for the Gaussian Process."""
+        if has_lag is False:
+            lags = jnp.zeros(self.nBand)
+        elif self.lag_func is not None:
+            lags = self.lag_func(params)
+        else:
+            lags = self._default_lag_func(params)
+
         t, band = X
         new_t = t - lags[band]
         inds = jnp.argsort(new_t)
         return (new_t, band), inds
-
-    def amp_transform(self, params: dict[str, JAXArray]) -> JAXArray:
-        return jnp.insert(jnp.atleast_1d(params["log_amp_delta"]), 0, 0.0)
-
-    @staticmethod
-    def mean_func(
-        zero_mean: bool, nBand: int, params: dict[str, JAXArray], X: JAXArray
-    ) -> JAXArray:
-        if zero_mean is True:
-            means = jnp.zeros(nBand)
-        else:
-            means = jnp.atleast_1d(params["mean"])
-        return means[X[1]]
-
-    def _build_gp(
-        self, params: dict[str, JAXArray]
-    ) -> tuple[GaussianProcess, JAXArray]:
-        # log amp + mean
-        log_amps = self.amp_transform(params)
-        means = partial(
-            MultiVarModel.mean_func, self.zero_mean, log_amps.shape[0], params
-        )
-
-        # time axis transform: t and band are not sorted,
-        # inds gives the sorted indices for the new_t
-        X, inds = self.lag_transform(self.X, self.has_lag, params)
-        t = X[0]
-        band = X[1]
-
-        # add jitter to the diagonal
-        if self.has_jitter is True:
-            diags = self.diag[inds] + (jnp.exp(params["log_jitter"]) ** 2)[band[inds]]
-        else:
-            diags = self.diag[inds]
-
-        # def kernel
-        kernel = quasisep.MultibandLowRank(
-            amplitudes=jnp.exp(log_amps),
-            kernel=self.kernel_def(jnp.exp(params["log_kernel_param"])),
-        )
-
-        return (
-            GaussianProcess(
-                kernel,
-                (t[inds], band[inds]),
-                diag=diags,
-                mean=means,
-                assume_sorted=True,
-            ),
-            inds,
-        )
 
     @eqx.filter_jit
     def log_prob(self, params: dict[str, JAXArray]) -> JAXArray:
@@ -177,6 +173,55 @@ class MultiVarModel(eqx.Module):
         _, cond = gp.condition(self.y[inds], new_X)
 
         return cond.loc, jnp.sqrt(cond.variance)
+
+    def _default_mean_func(self, params: dict[str, JAXArray], X: JAXArray) -> JAXArray:
+        return jnp.atleast_1d(params["mean"])[X[1]]
+
+    def _default_amp_scale_func(self, params: dict[str, JAXArray]) -> JAXArray:
+        return jnp.insert(jnp.atleast_1d(params["log_amp_scale"]), 0, 0.0)
+
+    def _default_lag_func(
+        self, params: dict[str, JAXArray]
+    ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
+        return jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
+
+    def _build_gp(
+        self, params: dict[str, JAXArray]
+    ) -> tuple[GaussianProcess, JAXArray]:
+        # log amp + mean
+        log_amp_scales = self.get_amp_scale(params)
+        means = partial(self.get_mean, self.zero_mean, params)
+
+        # time axis transform: t and band are not sorted,
+        # inds gives the sorted indices for the new_t
+        X, inds = self.lag_transform(self.has_lag, params, self.X)
+        t = X[0]
+        band = X[1]
+
+        # add jitter to the diagonal
+        if self.has_jitter is True:
+            diags = self.diag[inds] + (jnp.exp(params["log_jitter"]) ** 2)[band[inds]]
+        else:
+            diags = self.diag[inds]
+
+        # def kernel
+        new_params = params.copy()
+        new_params["amplitudes"] = jnp.exp(log_amp_scales)
+        kernel = self.multiband_kernel(
+            params=new_params,
+            kernel=self.base_kernel_def(jnp.exp(new_params["log_kernel_param"])),
+        )
+
+        return (
+            GaussianProcess(
+                kernel,
+                (t[inds], band[inds]),
+                diag=diags,
+                mean=means,
+                assume_sorted=True,
+            ),
+            inds,
+        )
 
 
 class MultiVarModelFFT(MultiVarModel):

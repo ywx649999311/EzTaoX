@@ -22,13 +22,16 @@ from tinygp.kernels.quasisep import (
 
 
 class MultibandLowRank(Wrapper):
-    amplitudes: jnp.ndarray
+    params: dict[str, JAXArray]
 
     def coord_to_sortable(self, X) -> JAXArray:
         return X[0]
 
     def observation_model(self, X) -> JAXArray:
-        return self.amplitudes[X[1]] * self.kernel.observation_model(X[0])
+        amplitudes = self.params["amplitudes"]
+        return amplitudes[X[1]] * self.kernel.observation_model(
+            self.coord_to_sortable(X)
+        )
 
 
 class CARMA(Quasisep):
