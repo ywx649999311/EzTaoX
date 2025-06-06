@@ -1,7 +1,6 @@
 """Light curve models module."""
 from collections.abc import Callable
 from functools import partial
-from typing import Optional
 
 import equinox as eqx
 import jax
@@ -166,7 +165,7 @@ class MultiVarModel(eqx.Module):
             tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and
         """
         # transform time axis
-        new_X, inds = self.lag_transform(X, self.has_lag, params)
+        new_X, _ = self.lag_transform(self.has_lag, params, X)
 
         # build gp, cond
         gp, inds = self._build_gp(params)
@@ -200,7 +199,10 @@ class MultiVarModel(eqx.Module):
 
         # add jitter to the diagonal
         if self.has_jitter is True:
-            diags = self.diag[inds] + (jnp.exp(params["log_jitter"]) ** 2)[band[inds]]
+            diags = (
+                self.diag[inds]
+                + (jnp.exp(jnp.atleast_1d(params["log_jitter"])) ** 2)[band[inds]]
+            )
         else:
             diags = self.diag[inds]
 
@@ -320,118 +322,73 @@ class MultiVarModelFFT(MultiVarModel):
         )
 
 
-class UniVarModel(eqx.Module):
-    """An interface for modeling univariate/single-band time series using
-    Gaussian Process (GP).
+class UniVarModel(MultiVarModel):
+    """A subclass of MultiVarModel for modeling univariate time series data
+    using Gaussian Processes with FFT-based transfer functions.
 
-    This interface only takes GP kernels that can be evaluated using the
-    scalable method of `DFM+17 <https://arxiv.org/abs/1703.09710>`. This
-    interface allows fitting for the mean of the time series and additional
-    variance to the uncertainty.
+    This class extends the MultiVarModel by adding support for full-rank
+    cross-band covariance matrices and user-defined transfer functions.
 
     Args:
-        t (JAXArray): The time points of the observed data.
-        y (JAXArray): The observed data.
-        yerr (JAXArray): Observational errors.
-        kernel (quasisep.Quasisep): A GP kernel from kernels.quasisep.
-        **kwargs: Additional keyword arguments.
-            zero_mean (bool): If True, assumes zero-mean GP. Defaults to True.
-            has_jitter (bool): If True, assumes the input observational erros
-                are underestimated. Defaults to False.
-
-    Raises:
-        TypeError: If kernel is not one from kernels.quasisep.
+        has_decorrelation (bool): Whether to add a decorrelation matrix to the
+            kernel. Default is False.
+        transfer_function (None | Callable): User-defined transfer function to
+            use. Default is None.
     """
-
-    t: JAXArray = eqx.field(converter=jnp.asarray)
-    y: JAXArray = eqx.field(converter=jnp.asarray)
-    yerr: JAXArray = eqx.field(converter=jnp.asarray)
-    inds: JAXArray = eqx.field(converter=jnp.asarray)
-    kernel_def: Callable
-    zero_mean: bool = True
-    has_jitter: bool = False
 
     def __init__(
         self,
         t: JAXArray | NDArray,
         y: JAXArray | NDArray,
         yerr: JAXArray | NDArray,
-        kernel: quasisep.Quasisep,
+        kernel: tinygp.kernels.Kernel,
+        mean_func: Callable | None = None,
+        amp_scale_func: Callable | None = None,
         **kwargs,
     ) -> None:
-        if not isinstance(kernel, quasisep.Quasisep):
-            raise TypeError("This model only takes quasiseperable kernels.")
-        self.t = t
-        self.y = y
-        self.yerr = yerr
-        self.inds = jnp.argsort(t)
-        self.kernel_def = jax.flatten_util.ravel_pytree(kernel)[1]
-        self.zero_mean = kwargs.get("zero_mean", True)
-        self.has_jitter = kwargs.get("has_jitter", False)
+        """Initialize the UniVarModel2 with time, observed data, and kernel."""
 
-    @staticmethod
-    def mean_func(zero_mean, params: dict[str, JAXArray], X: JAXArray) -> JAXArray:
-        if zero_mean is True:
-            mean = jnp.zeros(())
-        else:
-            mean = params["mean"]
-        return mean
-
-    def _build_gp(self, params: dict[str, JAXArray]) -> GaussianProcess:
-        mean = partial(UniVarModel.mean_func, self.zero_mean, params)
-
-        # add jitter to the diagonal
-        if self.has_jitter is True:
-            diags = self.yerr**2 + jnp.exp(params["log_jitter"]) ** 2
-        else:
-            diags = self.yerr**2
-
-        # re-create kernel
-        kernel = self.kernel_def(jnp.exp(params["log_kernel_param"]))
-        return GaussianProcess(
-            kernel,
-            self.t[self.inds],
-            diag=diags[self.inds],
-            mean=mean,
-            assume_sorted=True,
+        inds = jnp.argsort(jnp.asarray(t))
+        X = (jnp.asarray(t)[inds], jnp.zeros_like(t, dtype=int))
+        y = jnp.asarray(y)[inds]
+        yerr = jnp.asarray(yerr)[inds]
+        base_kernel = kernel
+        nBand = 1
+        has_lag = False
+        super().__init__(
+            X,
+            y,
+            yerr,
+            base_kernel,
+            nBand,
+            mean_func=mean_func,
+            amp_scale_func=amp_scale_func,
+            has_lag=has_lag,
+            **kwargs,
         )
 
-    @eqx.filter_jit
-    def log_prob(self, params: dict[str, JAXArray]) -> JAXArray:
-        """Calculate the log probability of the input parameters.
+    def _default_amp_scale_func(self, params: dict[str, JAXArray]) -> JAXArray:
+        return jnp.array([0.0])
 
-        Args:
-            params (dict[str, JAXArray]): Model parameters.
+    def lag_transform(
+        self, has_lag, params, X
+    ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
+        return self.X, jnp.arange(self.X[0].size)
 
-        Returns:
-            JAXArray: Log probability of the input parameters.
-        """
-        gp = self._build_gp(params)
-        return gp.log_probability(self.y[self.inds])
-
-    def sample(self, params: dict[str, JAXArray]) -> None:
-        """A convience function for intergrating with numpyro for MCMC sampling.
-
-        Args:
-            params (dict[str, JAXArray]): Model parameters.
-        """
-        gp = self._build_gp(params)
-        numpyro.sample("gp", gp.numpyro_dist(), obs=self.y[self.inds])
-
-    @eqx.filter_jit
-    def pred(
-        self, params: dict[str, JAXArray], t: JAXArray | NDArray
-    ) -> tuple[JAXArray, JAXArray]:
+    def pred(self, params, t) -> tuple[JAXArray, JAXArray]:
         """Make conditional GP prediction.
 
         Args:
             params (dict[str, JAXArray]): A dictionary containing model
                 parameters.
-            X (JAXArray): The time and band information for creating the
+            t (JAXArray): The time information for creating the
                 conditional GP prediction.
 
         Returns:
             tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and
         """
-        _, cond = self._build_gp(params).condition(self.y[self.inds], t)
+        # build gp, cond
+        gp, inds = self._build_gp(params)
+        _, cond = gp.condition(self.y[inds], (t, jnp.zeros_like(t, dtype=int)))
+
         return cond.loc, jnp.sqrt(cond.variance)

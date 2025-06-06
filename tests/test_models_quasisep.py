@@ -77,9 +77,11 @@ def test_univar(data, kernel, random) -> None:
     m = UniVarModel(
         x, y, jnp.ones_like(x) * 0.1, kernel, zero_mean=False, has_jitter=True
     )
-    gp2 = m._build_gp(model_param)
+    gp2, _ = m._build_gp(model_param)
 
+    # check consistency for log probability and grad of log probability
     assert_allclose(gp1.log_probability(y), gp2.log_probability(y))
+    assert_allclose(jax.grad(gp1.log_probability)(y), jax.grad(gp2.log_probability)(y))
 
 
 def test_univar_jit_grad(data, kernel, random) -> None:
