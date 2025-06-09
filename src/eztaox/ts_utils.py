@@ -1,6 +1,33 @@
+import jax
 import jax.numpy as jnp
 from numpy.typing import NDArray
 from tinygp.helpers import JAXArray
+
+
+@jax.jit
+def _get_nearest_idx(tIn, x) -> int:
+    """
+    Get the index of the nearest value in `tIn` to `x`.
+
+    Args:
+        tIn (JAXArray): Array of time values.
+        x (float): The value to find the nearest index for.
+    """
+    return jnp.argmin(jnp.abs(tIn - x))
+
+
+def downsampleByTime(tIn, tOut) -> JAXArray:
+    """
+    Downsample `tIn` to match the time points in `tOut`.
+
+    Args:
+        tIn (JAXArray): Array of time values to be downsampled.
+        tOut (JAXArray): Array of target time values.
+
+    Returns:
+        JAXArray: Downsampled array of time values.
+    """
+    return tIn[jax.vmap(_get_nearest_idx, in_axes=(None, 0))(tIn, tOut)]
 
 
 def formatlc(
