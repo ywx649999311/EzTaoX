@@ -127,6 +127,19 @@ class MultiVarModel(eqx.Module):
         inds = jnp.argsort(new_t)
         return (new_t, band), inds
 
+    def log_prior(self, params: dict[str, JAXArray]) -> JAXArray:
+        """Calculate the log prior of the input parameters.
+
+        Args:
+            params (dict[str, JAXArray]): Model parameters.
+
+        Returns:
+            JAXArray: Log prior of the input parameters.
+        """
+        # Assuming a Gaussian prior for demonstration purposes
+        log_prior = 0.0
+        return log_prior
+
     @eqx.filter_jit
     def log_prob(self, params: dict[str, JAXArray]) -> JAXArray:
         """Calculate the log probability of the input parameters.
@@ -138,7 +151,7 @@ class MultiVarModel(eqx.Module):
             JAXArray: Log probability of the input parameters.
         """
         gp, inds = self._build_gp(params)
-        return gp.log_probability(y=self.y[inds])
+        return gp.log_probability(y=self.y[inds]) + self.log_prior(params)
 
     def sample(self, params: dict[str, JAXArray]) -> None:
         """A convience function for intergrating with numpyro for MCMC sampling.
