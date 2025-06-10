@@ -198,13 +198,11 @@ class MultiVarModel(eqx.Module):
         band = X[1]
 
         # add jitter to the diagonal
+        diags = self.diag
         if self.has_jitter is True:
             diags = (
-                self.diag[inds]
-                + (jnp.exp(jnp.atleast_1d(params["log_jitter"])) ** 2)[band[inds]]
+                self.diag + (jnp.exp(jnp.atleast_1d(params["log_jitter"])) ** 2)[band]
             )
-        else:
-            diags = self.diag[inds]
 
         # def kernel
         new_params = params.copy()
@@ -218,7 +216,7 @@ class MultiVarModel(eqx.Module):
             GaussianProcess(
                 kernel,
                 (t[inds], band[inds]),
-                diag=diags,
+                diag=diags[inds],
                 mean=means,
                 assume_sorted=True,
             ),
