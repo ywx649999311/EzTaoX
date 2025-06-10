@@ -17,7 +17,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         x64: ["1"]
     runs-on: ${{ matrix.os }}
-    if: "! contains(toJSON(github.event.commits.*.message), '[skip-tests]')"
+    if: ${{ !contains(toJSON(github.event.commits.*.message), '[skip-tests]') }}
     steps:
       #----------------------------------------------
       #       check-out repo and set-up python
@@ -40,7 +40,7 @@ jobs:
           virtualenvs-in-project: true
           installer-parallel: true
       #----------------------------------------------
-      #       load cached venv if cache exists
+      # -----  recreate env unconditionally  -----
       #----------------------------------------------
       # Step 4: Recreate virtual environment unconditionally
       - name: Recreate Virtual Environment
@@ -48,12 +48,6 @@ jobs:
           rm -rf .venv
           poetry config virtualenvs.in-project true
           poetry install --without docs
-      #----------------------------------------------
-      # install dependencies if cache does not exist
-      #----------------------------------------------
-      # - name: Install dependencies
-      #   run: poetry install --without docs
-      #   if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       #----------------------------------------------
       #                 run tests
       #----------------------------------------------
