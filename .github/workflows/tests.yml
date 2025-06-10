@@ -1,6 +1,6 @@
 name: tests
 
-on: 
+on:
   push:
     branches:
       - master
@@ -22,13 +22,17 @@ jobs:
       #----------------------------------------------
       #       check-out repo and set-up python
       #----------------------------------------------
+      # Step 1: Check out the repository
       - uses: actions/checkout@v4
+
+      # Step 2: Set up Python
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       #----------------------------------------------
       #  -----  install & configure poetry  -----
       #----------------------------------------------
+      # Step 3: Install and configure Poetry
       - name: Install and configure Poetry
         uses: snok/install-poetry@v1
         with:
@@ -38,24 +42,25 @@ jobs:
       #----------------------------------------------
       #       load cached venv if cache exists
       #----------------------------------------------
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v4
-        with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+      # Step 4: Recreate virtual environment unconditionally
+      - name: Recreate Virtual Environment
+        run: |
+          rm -rf .venv
+          poetry config virtualenvs.in-project true
+          poetry install --without docs
       #----------------------------------------------
       # install dependencies if cache does not exist
       #----------------------------------------------
-      - name: Install dependencies
-        run: poetry install --without docs
-        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+      # - name: Install dependencies
+      #   run: poetry install --without docs
+      #   if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       #----------------------------------------------
       #                 run tests
       #----------------------------------------------
+      # Step 5: Run tests
       - name: Run tests
         run: |
           source .venv/bin/activate
           poetry run pytest --cov tests/
-        env: 
-          JAX_ENABLE_X64: ${{ matrix.x64 }}          
+        env:
+          JAX_ENABLE_X64: ${{ matrix.x64 }}
