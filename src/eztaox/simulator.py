@@ -68,7 +68,6 @@ class MultiVarSim(eqx.Module):
         # compile funcs
         self._build_gp(self.init_params)
 
-    @eqx.filter_jit
     def full(
         self, key: jax.random.PRNGKey, params: dict[str, JAXArray] | None = None
     ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
@@ -79,7 +78,6 @@ class MultiVarSim(eqx.Module):
 
         return (self.X[0][inds], self.X[1][inds]), gp.sample(key)
 
-    @eqx.filter_jit
     def random(
         self,
         nRand: int,
@@ -100,7 +98,6 @@ class MultiVarSim(eqx.Module):
             full_y[rand_inds],
         )
 
-    # @eqx.filter_jit
     def fixed_input(
         self,
         sim_X: tuple[JAXArray | NDArray, JAXArray | NDArray],
@@ -212,73 +209,75 @@ class MultiVarSim(eqx.Module):
         return jnp.insert(jnp.atleast_1d(params["lag"]), 0, 0.0)
 
 
-# class UniVarModel(MultiVarModel):
-#     """A subclass of MultiVarModel for modeling univariate time series data
-#     using Gaussian Processes with FFT-based transfer functions.
+class UniVarSim(MultiVarSim):
+    """Univariate simulation model for light curves."""
 
-#     This class extends the MultiVarModel by adding support for full-rank
-#     cross-band covariance matrices and user-defined transfer functions.
+    def __init__(
+        self,
+        base_kernel: quasisep.Quasisep,
+        min_dt: float,
+        max_dt: float,
+        init_params: dict[str, JAXArray],
+        mean_func: Callable | None = None,
+        amp_scale_func: Callable | None = None,
+        **kwargs,
+    ) -> None:
+        """Initialize the UniVarSim with time, observed data, and kernel."""
 
-#     Args:
-#         has_decorrelation (bool): Whether to add a decorrelation matrix to the
-#             kernel. Default is False.
-#         transfer_function (None | Callable): User-defined transfer function to
-#             use. Default is None.
-#     """
+        # univar specific attributes
+        nBand = 1
+        has_lag = False
 
-#     def __init__(
-#         self,
-#         t: JAXArray | NDArray,
-#         y: JAXArray | NDArray,
-#         yerr: JAXArray | NDArray,
-#         kernel: tinygp.kernels.Kernel,
-#         mean_func: Callable | None = None,
-#         amp_scale_func: Callable | None = None,
-#         **kwargs,
-#     ) -> None:
-#         """Initialize the UniVarModel2 with time, observed data, and kernel."""
+        # call super
+        super().__init__(
+            base_kernel,
+            min_dt,
+            max_dt,
+            nBand,
+            init_params,
+            mean_func=mean_func,
+            amp_scale_func=amp_scale_func,
+            has_lag=has_lag,
+            **kwargs,
+        )
 
-#         inds = jnp.argsort(jnp.asarray(t))
-#         X = (jnp.asarray(t)[inds], jnp.zeros_like(t, dtype=int))
-#         y = jnp.asarray(y)[inds]
-#         yerr = jnp.asarray(yerr)[inds]
-#         base_kernel = kernel
-#         nBand = 1
-#         has_lag = False
-#         super().__init__(
-#             X,
-#             y,
-#             yerr,
-#             base_kernel,
-#             nBand,
-#             mean_func=mean_func,
-#             amp_scale_func=amp_scale_func,
-#             has_lag=has_lag,
-#             **kwargs,
-#         )
+    def _default_amp_scale_func(self, params: dict[str, JAXArray]) -> JAXArray:
+        return jnp.array([0.0])
 
-#     def _default_amp_scale_func(self, params: dict[str, JAXArray]) -> JAXArray:
-#         return jnp.array([0.0])
+    # def full(
+    #     self, key: jax.random.PRNGKey, params: dict[str, JAXArray] | None = None
+    # ) -> tuple[JAXArray, JAXArray]:
+    #     """Build a full Gaussian Process with the given parameters."""
 
-#     def lag_transform(
-#         self, has_lag, params, X
-#     ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
-#         return self.X, jnp.arange(self.X[0].size)
+    #     full_X, full_y = super().full(key, params)
+    #     return (full_X[0], full_y)
 
-#     def pred(self, params, t) -> tuple[JAXArray, JAXArray]:
-#         """Make conditional GP prediction.
+    # def random(
+    #     self,
+    #     nRand: int,
+    #     lc_key: jax.random.PRNGKey,
+    #     random_key: jax.random.PRNGKey,
+    #     params: dict[str, JAXArray] | None = None,
+    # ) -> tuple[JAXArray, JAXArray]:
+    #     """Sample a random Gaussian Process with the given parameters."""
 
-#         Args:
-#             params (dict[str, JAXArray]): A dictionary containing model
-#                 parameters.
-#             t (JAXArray): The time information for creating the
-#                 conditional GP prediction.
+    #     # get full light curve
+    #     full_X, full_y = self.full(lc_key, params)
 
-#         Returns:
-#             tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and
-#         """
-#         # build gp, cond
-#         gp, inds = self._build_gp(params)
-#         _, cond = gp.condition(self.y[inds], (t, jnp.zeros_like(t, dtype=int)))
+    #     # select randomly & return
+    #     rand_inds = jnp.sort(jax.random.permutation(random_key, full_y.size)[:nRand])
+    #     return (full_X[rand_inds], full_y[rand_inds])
 
-#         return cond.loc, jnp.sqrt(cond.variance)
+    def fixed_input(
+        self,
+        sim_t: JAXArray | NDArray,
+        lc_key: jax.random.PRNGKey,
+        params: dict[str, JAXArray] | None = None,
+    ) -> tuple[JAXArray, JAXArray]:
+        # get full light curve
+        # full_X, full_y = self.full(nRand, lc_key, random_key, params)
+
+        sim_X = (jnp.asarray(sim_t), jnp.zeros_like(sim_t))
+
+        _, sim_y = super().fixed_input(sim_X, lc_key, params)
+        return (sim_X, sim_y)
