@@ -244,40 +244,14 @@ class UniVarSim(MultiVarSim):
     def _default_amp_scale_func(self, params: dict[str, JAXArray]) -> JAXArray:
         return jnp.array([0.0])
 
-    # def full(
-    #     self, key: jax.random.PRNGKey, params: dict[str, JAXArray] | None = None
-    # ) -> tuple[JAXArray, JAXArray]:
-    #     """Build a full Gaussian Process with the given parameters."""
-
-    #     full_X, full_y = super().full(key, params)
-    #     return (full_X[0], full_y)
-
-    # def random(
-    #     self,
-    #     nRand: int,
-    #     lc_key: jax.random.PRNGKey,
-    #     random_key: jax.random.PRNGKey,
-    #     params: dict[str, JAXArray] | None = None,
-    # ) -> tuple[JAXArray, JAXArray]:
-    #     """Sample a random Gaussian Process with the given parameters."""
-
-    #     # get full light curve
-    #     full_X, full_y = self.full(lc_key, params)
-
-    #     # select randomly & return
-    #     rand_inds = jnp.sort(jax.random.permutation(random_key, full_y.size)[:nRand])
-    #     return (full_X[rand_inds], full_y[rand_inds])
-
     def fixed_input(
         self,
         sim_t: JAXArray | NDArray,
         lc_key: jax.random.PRNGKey,
         params: dict[str, JAXArray] | None = None,
     ) -> tuple[JAXArray, JAXArray]:
-        # get full light curve
-        # full_X, full_y = self.full(nRand, lc_key, random_key, params)
+        """Sample a random Gaussian Process with the given parameters at fixed
+        time points."""
 
         sim_X = (jnp.asarray(sim_t), jnp.zeros_like(sim_t))
-
-        _, sim_y = super().fixed_input(sim_X, lc_key, params)
-        return (sim_X, sim_y)
+        return super().fixed_input(sim_X, lc_key, params)
