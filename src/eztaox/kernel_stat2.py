@@ -146,37 +146,3 @@ def drw_psd(
     sigma2 = 2 * amp**2 * a0
 
     return sigma2 / (a0**2 + (2 * jnp.pi * f) ** 2)
-
-
-@jax.jit
-def drw_acf(t: JAXArray | NDArray, tau: JAXArray | float) -> JAXArray:
-    """
-    Return a function that computes the DRW autocorrelation function (ACF).
-
-    Args:
-        tau (float): DRW decorrelation/characteristic timescale.
-
-    Returns:
-        A function that takes in time lags and returns ACF at the given lags.
-    """
-    # convert to CARMA parameter
-    a0 = 1 / tau
-    return jnp.exp(-a0 * t)
-
-
-@jax.jit
-def drw_sf(
-    t: JAXArray | NDArray, tau: JAXArray | float, amp: JAXArray | float
-) -> JAXArray:
-    """
-    Return a function that computes the structure function (SF) of DRW.
-
-    Args:
-        amp (float): DRW RMS amplitude
-        tau (float): DRW decorrelation/characteristic timescale.
-
-    Returns:
-        A function that takes in time lags and returns DRW SF at the given lags.
-    """
-
-    return jnp.sqrt(2 * amp**2 * (1 - drw_acf(t, tau)))
