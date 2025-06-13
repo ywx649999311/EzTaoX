@@ -17,9 +17,11 @@ class gpStat2(eqx.Module):
     """Base class for second-order statistics of Gaussian processes."""
 
     kernel_def: Callable
+    kernel_params: JAXArray
 
     def __init__(self, kernel: Callable) -> None:
         self.kernel_def = jax.flatten_util.ravel_pytree(kernel)[1]
+        self.kernel_params = jax.flatten_util.ravel_pytree(kernel)[0]
 
     def _build_kernel(
         self, params: JAXArray | NDArray
@@ -27,15 +29,31 @@ class gpStat2(eqx.Module):
         kernel = self.kernel_def(jnp.asarray(params))
         return kernel, kernel.evaluate_diag(0.0)
 
-    def acf(self, ts: JAXArray | NDArray, params: JAXArray | NDArray) -> JAXArray:
+    def acf(
+        self, ts: JAXArray | NDArray, params: JAXArray | NDArray | None = None
+    ) -> JAXArray:
+        params = self.kernel_params if params is None else params
         kernel, amp2 = self._build_kernel(params)
         acvf = jax.vmap(kernel.evaluate, in_axes=(None, 0))(0.0, jnp.asarray(ts))
         return acvf / amp2
 
-    def sf(self, ts: JAXArray | NDArray, params: JAXArray | NDArray) -> JAXArray:
+    def sf(
+        self, ts: JAXArray | NDArray, params: JAXArray | NDArray | None = None
+    ) -> JAXArray:
+        params = self.kernel_params if params is None else params
         kernel, amp2 = self._build_kernel(params)
         acf = jax.vmap(kernel.evaluate, in_axes=(None, 0))(0.0, jnp.asarray(ts)) / amp2
         return jnp.sqrt(2 * amp2 * (1 - acf))
+
+    def psd(
+        self,
+        fs: JAXArray | NDArray,
+        params: JAXArray | NDArray | None = None,
+        df: float | JAXArray | None = 0.01,
+    ) -> JAXArray:
+        params = self.kernel_params if params is None else params
+        kernel, _ = self._build_kernel(params)
+        return jnp.stack(jax.vmap(kernel.power, in_axes=(0, None))(jnp.asarray(fs), df))
 
 
 @jax.jit

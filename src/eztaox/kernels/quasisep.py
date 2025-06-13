@@ -1,37 +1,172 @@
 """Quasisep Kernels"""
 from __future__ import annotations
 
+from typing import Any
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import tinygp.kernels.quasisep as tkq
+from jax._src import dtypes
 from numpy.typing import NDArray
 from tinygp.helpers import JAXArray
-from tinygp.kernels.quasisep import (
-    SHO,
-    Celerite,
-    Cosine,
-    Exp,
-    Matern32,
-    Matern52,
-    Product,
-    Quasisep,
-    Scale,
-    Sum,
-    Wrapper,
-)
+from tinygp.kernels import Kernel
 
 
-class MultibandLowRank(Wrapper):
-    params: dict[str, JAXArray]
+class Quasisep(tkq.Quasisep):
+    def __add__(self, other: Kernel | JAXArray) -> Kernel:
+        if not isinstance(other, tkq.Quasisep):
+            raise ValueError(
+                "Quasisep kernels can only be added to other Quasisep kernels"
+            )
+        return Sum(self, other)
 
-    def coord_to_sortable(self, X) -> JAXArray:
-        return X[0]
+    def __radd__(self, other: Any) -> Kernel:
+        # We'll hit this first branch when using the `sum` function
+        if other == 0:
+            return self
+        if not isinstance(other, tkq.Quasisep):
+            raise ValueError(
+                "Quasisep kernels can only be added to other Quasisep kernels"
+            )
+        return Sum(other, self)
 
-    def observation_model(self, X) -> JAXArray:
-        amplitudes = self.params["amplitudes"]
-        return amplitudes[X[1]] * self.kernel.observation_model(
-            self.coord_to_sortable(X)
+    def __mul__(self, other: Kernel | JAXArray) -> Kernel:
+        if isinstance(other, tkq.Quasisep):
+            return Product(self, other)
+        if isinstance(other, Kernel) or jnp.ndim(other) != 0:
+            raise ValueError(
+                "Quasisep kernels can only be multiplied by scalars and other "
+                "Quasisep kernels"
+            )
+        return tkq.Scale(kernel=self, scale=other)
+
+    def __rmul__(self, other: Any) -> Kernel:
+        if isinstance(other, tkq.Quasisep):
+            return Product(other, self)
+        if isinstance(other, Kernel) or jnp.ndim(other) != 0:
+            raise ValueError(
+                "Quasisep kernels can only be multiplied by scalars and other "
+                "Quasisep kernels"
+            )
+        return tkq.Scale(kernel=self, scale=other)
+
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        return NotImplementedError
+
+
+class Sum(Quasisep, tkq.Sum):
+    """A helper to represent the sum of two quasiseparable kernels"""
+
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        return self.kernel1.power(f, df) + self.kernel2.power(f, df)
+
+
+class Product(Quasisep, tkq.Product):
+    @jax.jit
+    def power(self, f: float | JAXArray, df: float | JAXArray) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        return (
+            jnp.convolve(
+                jnp.atleast_1d(self.kernel1.power(f)),
+                jnp.atleast_1d(self.kernel2.power(f)),
+                mode="same",
+            )[0]
+            * df
         )
+
+
+class Exp(Quasisep, tkq.Exp):
+    r"""A wrapper for the exponential kernel with a scale parameter
+
+    This kernel is a simple wrapper around the `Exp` kernel, allowing for
+    a scale parameter to be applied to the kernel.
+
+    Args:
+        scale: The scale parameter for the exponential kernel.
+        sigma: The amplitude of the kernel.
+    """
+
+    @jax.jit
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        a0 = 1 / self.scale
+        sigma_hat2 = 2 * self.sigma**2 * a0
+        return sigma_hat2 / (a0**2 + (2 * jnp.pi * f) ** 2)
+
+
+class Cosine(Quasisep, tkq.Cosine):
+    @jax.jit
+    def power(
+        self, f: float | JAXArray, width: float | JAXArray | None = None
+    ) -> JAXArray:
+        width = jnp.finfo(jnp.array(self.scale)).eps if width is None else width
+        return 0.5 * self.sigma**2 * jnp.exp(-(((f - 1 / self.scale) / width) ** 2))
+
+
+class Celerite(Quasisep, tkq.Celerite):
+    @jax.jit
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        w = 2 * jnp.pi * f
+        w2 = jnp.square(w)
+        ac = self.a * self.c
+        bd = self.b * self.d
+        c2 = jnp.square(self.c)
+        d2 = jnp.square(self.d)
+
+        num = (ac + bd) * (c2 + d2) + (ac - bd) * w2
+        denom = jnp.square(w2) + 2 * (c2 - d2) * w2 + jnp.square(c2 + d2)
+
+        return jnp.sqrt(2 / jnp.pi) * num / denom
+
+
+class Matern32(Quasisep, tkq.Matern32):
+    @jax.jit
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        num = 4.0 * jnp.power(3, 3 / 2) * self.scale
+        denom = jnp.square(3 + jnp.square(2.0 * jnp.pi * f * self.scale))
+        return self.sigma**2 * num / denom
+
+
+class Matern52(Quasisep, tkq.Matern52):
+    @jax.jit
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        num = 4.0 * jnp.power(5, 5 / 2) * self.scale
+        denom = 0.75 * (5 + jnp.square(2.0 * jnp.pi * f * self.scale)) ** 3
+        return self.sigma**2 * num / denom
+
+
+class SHO(Quasisep, tkq.SHO):
+    @jax.jit
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        s0 = self.sigma**2 / (self.quality * self.omega)
+        omega = 2.0 * jnp.pi * f
+        num = s0 * jnp.power(self.omega, 4)
+        denom = jnp.square(jnp.square(omega) - jnp.square(self.omega)) + jnp.square(
+            self.omega * omega / self.quality
+        )
+
+        return jnp.sqrt(2 / jnp.pi) * num / denom
 
 
 class CARMA(Quasisep):
@@ -243,6 +378,30 @@ class CARMA(Quasisep):
 
         return tm_real + tm_complex_diag + -tm_complex_u.T + tm_complex_u
 
+    @jax.jit
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        arparams = jnp.append(jnp.array(self.alpha), 1.0)
+        maparams = jnp.array(self.beta)
+
+        complex_dtype = dtypes.to_complex_dtype(arparams.dtype)
+
+        # init terms
+        num_terms = jnp.zeros(1, dtype=complex_dtype)
+        denom_terms = jnp.zeros(1, dtype=complex_dtype)
+
+        for i, param in enumerate(maparams):
+            num_terms += param * jnp.power(2 * jnp.pi * f * (1j), i)
+
+        for k, param in enumerate(arparams):
+            denom_terms += param * jnp.power(2 * jnp.pi * f * (1j), k)
+
+        num = jnp.abs(jnp.power(num_terms, 2))
+        denom = jnp.abs(jnp.power(denom_terms, 2))
+
+        return (num / denom)[0]
+
 
 @jax.jit
 def carma_roots(poly_coeffs: JAXArray) -> JAXArray:
@@ -423,3 +582,16 @@ def _compute(alpha: JAXArray, beta: JAXArray, sigma: JAXArray) -> tuple[JAXArray
         om_real,
         om_complex,
     )
+
+
+class MultibandLowRank(tkq.Wrapper):
+    params: dict[str, JAXArray]
+
+    def coord_to_sortable(self, X) -> JAXArray:
+        return X[0]
+
+    def observation_model(self, X) -> JAXArray:
+        amplitudes = self.params["amplitudes"]
+        return amplitudes[X[1]] * self.kernel.observation_model(
+            self.coord_to_sortable(X)
+        )

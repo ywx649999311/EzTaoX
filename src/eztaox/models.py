@@ -8,6 +8,7 @@ import jax.flatten_util
 import jax.numpy as jnp
 import numpyro
 import tinygp
+import tinygp.kernels.quasisep as tkq
 from numpy.typing import NDArray
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
@@ -45,7 +46,7 @@ class MultiVarModel(eqx.Module):
     y: JAXArray = eqx.field(converter=jnp.asarray)
     diag: JAXArray = eqx.field(converter=jnp.asarray)
     base_kernel_def: Callable
-    multiband_kernel: quasisep.Wrapper
+    multiband_kernel: tkq.Wrapper
     nBand: int
     mean_func: Callable | None
     amp_scale_func: Callable | None
@@ -61,13 +62,13 @@ class MultiVarModel(eqx.Module):
         yerr: JAXArray | NDArray,
         base_kernel: quasisep.Quasisep,
         nBand: int,
-        multiband_kernel: quasisep.Wrapper | None = quasisep.MultibandLowRank,
+        multiband_kernel: tkq.Wrapper | None = quasisep.MultibandLowRank,
         mean_func: Callable | None = None,
         amp_scale_func: Callable | None = None,
         lag_func: Callable | None = None,
         **kwargs,
     ) -> None:
-        if not isinstance(base_kernel, quasisep.Quasisep):
+        if not isinstance(base_kernel, tkq.Quasisep):
             raise TypeError("This model only takes quasiseperable kernels.")
 
         # format inputs
@@ -352,7 +353,7 @@ class UniVarModel(MultiVarModel):
         t: JAXArray | NDArray,
         y: JAXArray | NDArray,
         yerr: JAXArray | NDArray,
-        kernel: tinygp.kernels.Kernel,
+        kernel: tkq.Quasisep,
         mean_func: Callable | None = None,
         amp_scale_func: Callable | None = None,
         **kwargs,
