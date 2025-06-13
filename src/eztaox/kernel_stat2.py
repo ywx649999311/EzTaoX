@@ -1,13 +1,59 @@
-"""Utility functions for kernels"""
+"""Second-Order statistic functions for kernels"""
+from collections.abc import Callable
 
-
+import equinox as eqx
 import jax
+import jax.flatten_util
 import jax.numpy as jnp
+import tinygp
 from jax._src import dtypes
 from numpy.typing import NDArray
 from tinygp.helpers import JAXArray
 
-from eztaox.kernels import carma_acvf, carma_roots
+from eztaox.kernels.quasisep import carma_acvf, carma_roots
+
+
+class gpStat2(eqx.Module):
+    """Base class for second-order statistics of Gaussian processes."""
+
+    kernel_def: Callable
+    kernel_params: JAXArray
+
+    def __init__(self, kernel: Callable) -> None:
+        self.kernel_def = jax.flatten_util.ravel_pytree(kernel)[1]
+        self.kernel_params = jax.flatten_util.ravel_pytree(kernel)[0]
+
+    def _build_kernel(
+        self, params: JAXArray | NDArray
+    ) -> tuple[tinygp.kernels.Kernel, JAXArray]:
+        kernel = self.kernel_def(jnp.asarray(params))
+        return kernel, kernel.evaluate_diag(0.0)
+
+    def acf(
+        self, ts: JAXArray | NDArray, params: JAXArray | NDArray | None = None
+    ) -> JAXArray:
+        params = self.kernel_params if params is None else params
+        kernel, amp2 = self._build_kernel(params)
+        acvf = jax.vmap(kernel.evaluate, in_axes=(None, 0))(0.0, jnp.asarray(ts))
+        return acvf / amp2
+
+    def sf(
+        self, ts: JAXArray | NDArray, params: JAXArray | NDArray | None = None
+    ) -> JAXArray:
+        params = self.kernel_params if params is None else params
+        kernel, amp2 = self._build_kernel(params)
+        acf = jax.vmap(kernel.evaluate, in_axes=(None, 0))(0.0, jnp.asarray(ts)) / amp2
+        return jnp.sqrt(2 * amp2 * (1 - acf))
+
+    def psd(
+        self,
+        fs: JAXArray | NDArray,
+        params: JAXArray | NDArray | None = None,
+        df: float | JAXArray | None = 0.01,
+    ) -> JAXArray:
+        params = self.kernel_params if params is None else params
+        kernel, _ = self._build_kernel(params)
+        return jnp.stack(jax.vmap(kernel.power, in_axes=(0, None))(jnp.asarray(fs), df))
 
 
 @jax.jit
@@ -118,37 +164,3 @@ def drw_psd(
     sigma2 = 2 * amp**2 * a0
 
     return sigma2 / (a0**2 + (2 * jnp.pi * f) ** 2)
-
-
-@jax.jit
-def drw_acf(t: JAXArray | NDArray, tau: JAXArray | float) -> JAXArray:
-    """
-    Return a function that computes the DRW autocorrelation function (ACF).
-
-    Args:
-        tau (float): DRW decorrelation/characteristic timescale.
-
-    Returns:
-        A function that takes in time lags and returns ACF at the given lags.
-    """
-    # convert to CARMA parameter
-    a0 = 1 / tau
-    return jnp.exp(-a0 * t)
-
-
-@jax.jit
-def drw_sf(
-    t: JAXArray | NDArray, tau: JAXArray | float, amp: JAXArray | float
-) -> JAXArray:
-    """
-    Return a function that computes the structure function (SF) of DRW.
-
-    Args:
-        amp (float): DRW RMS amplitude
-        tau (float): DRW decorrelation/characteristic timescale.
-
-    Returns:
-        A function that takes in time lags and returns DRW SF at the given lags.
-    """
-
-    return jnp.sqrt(2 * amp**2 * (1 - drw_acf(t, tau)))
