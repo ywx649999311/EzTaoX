@@ -6,11 +6,13 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 import tinygp.kernels.quasisep as tkq
 from jax._src import dtypes
 from numpy.typing import NDArray
 from tinygp.helpers import JAXArray
 from tinygp.kernels import Kernel
+from tinygp.kernels.quasisep import _prod_helper
 
 
 class Quasisep(tkq.Quasisep):
@@ -69,17 +71,9 @@ class Sum(Quasisep, tkq.Sum):
 
 
 class Product(Quasisep, tkq.Product):
-    @jax.jit
     def power(self, f: float | JAXArray, df: float | JAXArray) -> JAXArray:
         """Compute the power spectral density (PSD) at frequency `f`."""
-        return (
-            jnp.convolve(
-                jnp.atleast_1d(self.kernel1.power(f)),
-                jnp.atleast_1d(self.kernel2.power(f)),
-                mode="same",
-            )[0]
-            * df
-        )
+        return NotImplementedError
 
 
 class Exp(Quasisep, tkq.Exp):
@@ -93,7 +87,6 @@ class Exp(Quasisep, tkq.Exp):
         sigma: The amplitude of the kernel.
     """
 
-    @jax.jit
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -104,16 +97,21 @@ class Exp(Quasisep, tkq.Exp):
 
 
 class Cosine(Quasisep, tkq.Cosine):
-    @jax.jit
+    psd_width: JAXArray | float = eqx.field(
+        default_factory=lambda: 0.001 * jnp.ones(())
+    )
+
     def power(
-        self, f: float | JAXArray, width: float | JAXArray | None = None
+        self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
-        width = jnp.finfo(jnp.array(self.scale)).eps if width is None else width
-        return 0.5 * self.sigma**2 * jnp.exp(-(((f - 1 / self.scale) / width) ** 2))
+        return (
+            0.5
+            * self.sigma**2
+            * jnp.exp(-(((f - 1 / self.scale) / self.psd_width) ** 2))
+        )
 
 
 class Celerite(Quasisep, tkq.Celerite):
-    @jax.jit
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -132,7 +130,6 @@ class Celerite(Quasisep, tkq.Celerite):
 
 
 class Matern32(Quasisep, tkq.Matern32):
-    @jax.jit
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -143,7 +140,6 @@ class Matern32(Quasisep, tkq.Matern32):
 
 
 class Matern52(Quasisep, tkq.Matern52):
-    @jax.jit
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -154,7 +150,6 @@ class Matern52(Quasisep, tkq.Matern52):
 
 
 class SHO(Quasisep, tkq.SHO):
-    @jax.jit
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -167,6 +162,58 @@ class SHO(Quasisep, tkq.SHO):
         )
 
         return jnp.sqrt(2 / jnp.pi) * num / denom
+
+
+class lorentzian(Quasisep):
+    omega: JAXArray | float
+    quality: JAXArray | float
+    sigma: JAXArray | float = eqx.field(default_factory=lambda: jnp.ones(()))
+
+    @eqx.filter_jit
+    def get_scale(self) -> tuple[JAXArray | float, JAXArray | float]:
+        return 2 * self.quality / self.omega, 2 * np.pi / self.omega
+
+    def design_matrix(self) -> JAXArray:
+        drw_scale, cos_scale = self.get_scale()
+        f = 2 * np.pi / cos_scale
+        F1 = jnp.array([[-1 / drw_scale]])
+        F2 = jnp.array([[0, -f], [f, 0]])
+        return _prod_helper(F1, jnp.eye(F2.shape[0])) + _prod_helper(
+            jnp.eye(F1.shape[0]), F2
+        )
+
+    def stationary_covariance(self) -> JAXArray:
+        drw_scale, cos_scale = self.get_scale()
+        a1 = jnp.ones((1, 1))
+        a2 = jnp.eye(2)
+        return _prod_helper(a1, a2)
+
+    def observation_model(self, X: JAXArray) -> JAXArray:
+        del X
+        a1 = jnp.array([self.sigma])
+        a2 = jnp.array([1.0, 0.0])
+        return _prod_helper(a1, a2)
+
+    def transition_matrix(self, X1: JAXArray, X2: JAXArray) -> JAXArray:
+        drw_scale, cos_scale = self.get_scale()
+        dt = X2 - X1
+        f = 2 * np.pi / cos_scale
+        cos = jnp.cos(f * dt)
+        sin = jnp.sin(f * dt)
+
+        a1 = jnp.exp(-dt[None, None] / drw_scale)
+        a2 = jnp.array([[cos, sin], [-sin, cos]])
+
+        return _prod_helper(a1, a2)
+
+    def power(
+        self, f: float | JAXArray, df: float | JAXArray | None = None
+    ) -> JAXArray:
+        num = jnp.square(self.omega) * self.quality
+        f0 = self.omega / (2 * np.pi)
+        denom = jnp.square(f0) + 4 * jnp.square(self.quality) * jnp.square(f - f0)
+        pre_fix = np.sqrt(2 / np.pi)
+        return pre_fix * num / denom
 
 
 class CARMA(Quasisep):
