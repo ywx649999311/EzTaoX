@@ -164,7 +164,7 @@ class SHO(Quasisep, tkq.SHO):
         return jnp.sqrt(2 / jnp.pi) * num / denom
 
 
-class lorentzian(Quasisep):
+class Lorentzian(Quasisep):
     omega: JAXArray | float
     quality: JAXArray | float
     sigma: JAXArray | float = eqx.field(default_factory=lambda: jnp.ones(()))

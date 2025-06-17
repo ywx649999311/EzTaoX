@@ -43,8 +43,8 @@ class MultiVarModel(eqx.Module):
     """
 
     X: tuple[JAXArray, JAXArray]
-    y: JAXArray = eqx.field(converter=jnp.asarray)
-    diag: JAXArray = eqx.field(converter=jnp.asarray)
+    y: JAXArray
+    diag: JAXArray
     base_kernel_def: Callable
     multiband_kernel: tkq.Wrapper
     nBand: int
@@ -75,6 +75,8 @@ class MultiVarModel(eqx.Module):
         t = jnp.asarray(X[0])
         inds = jnp.argsort(t)
         band = jnp.asarray(X[1], dtype=int)
+        y = jnp.asarray(y)
+        yerr = jnp.asarray(yerr)
 
         # assign attributes
         self.X = (t[inds], band[inds])
