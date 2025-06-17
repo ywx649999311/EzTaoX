@@ -6,6 +6,7 @@ import equinox as eqx
 import jax
 import jax.flatten_util
 import jax.numpy as jnp
+import tinygp.kernels.quasisep as tkq
 from numpy.typing import NDArray
 from tinygp import GaussianProcess
 from tinygp.helpers import JAXArray
@@ -16,7 +17,7 @@ from eztaox.ts_utils import _get_nearest_idx
 
 class MultiVarSim(eqx.Module):
     base_kernel_def: Callable
-    multiband_kernel: quasisep.Wrapper
+    multiband_kernel: tkq.Wrapper
     X: tuple[JAXArray, JAXArray]
     init_params: dict[str, JAXArray]
     nBand: int
@@ -33,7 +34,7 @@ class MultiVarSim(eqx.Module):
         max_dt: float,
         nBand: int,
         init_params: dict[str, JAXArray],
-        multiband_kernel: quasisep.Wrapper | None = quasisep.MultibandLowRank,
+        multiband_kernel: tkq.Wrapper | None = quasisep.MultibandLowRank,
         mean_func: Callable | None = None,
         amp_scale_func: Callable | None = None,
         lag_func: Callable | None = None,
