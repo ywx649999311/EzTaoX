@@ -41,7 +41,7 @@ class Quasisep(tkq.Quasisep):
                 "Quasisep kernels can only be multiplied by scalars and other "
                 "Quasisep kernels"
             )
-        return tkq.Scale(kernel=self, scale=other)
+        return Scale(kernel=self, scale=other)
 
     def __rmul__(self, other: Any) -> Kernel:
         if isinstance(other, tkq.Quasisep):
@@ -51,7 +51,7 @@ class Quasisep(tkq.Quasisep):
                 "Quasisep kernels can only be multiplied by scalars and other "
                 "Quasisep kernels"
             )
-        return tkq.Scale(kernel=self, scale=other)
+        return Scale(kernel=self, scale=other)
 
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
@@ -74,6 +74,14 @@ class Product(Quasisep, tkq.Product):
     def power(self, f: float | JAXArray, df: float | JAXArray) -> JAXArray:
         """Compute the power spectral density (PSD) at frequency `f`."""
         return NotImplementedError
+
+
+class Scale(Quasisep, tkq.Scale):
+    """The product of a scalar and a quasiseparable kernel"""
+
+    def power(self, f: float | JAXArray, df: float | JAXArray) -> JAXArray:
+        """Compute the power spectral density (PSD) at frequency `f`."""
+        return self.kernel.power(f) * jnp.square(self.scale)
 
 
 class Exp(Quasisep, tkq.Exp):
@@ -209,10 +217,10 @@ class Lorentzian(Quasisep):
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
-        num = jnp.square(self.omega) * self.quality
         f0 = self.omega / (2 * np.pi)
+        num = jnp.square(self.sigma) * self.quality * f0
         denom = jnp.square(f0) + 4 * jnp.square(self.quality) * jnp.square(f - f0)
-        pre_fix = np.sqrt(2 / np.pi)
+        pre_fix = np.sqrt(2 / np.pi) / (2 * np.pi)
         return pre_fix * num / denom
 
 
