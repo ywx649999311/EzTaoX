@@ -1,4 +1,7 @@
-"""Quasisep Kernels"""
+"""
+Scalable kernels exploiting the quasiseparable structure in the relevant matrices to
+achieve a O(N) scaling. This module extends the `tinygp.kernels.quasisep` module.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -16,6 +19,14 @@ from tinygp.kernels.quasisep import _prod_helper
 
 
 class Quasisep(tkq.Quasisep):
+    """
+    An extension of the `tinygp.kernels.quasisep.Quasisep` kernel.
+
+    `tinygp.kernels.quasisep.Quasisep` is the base class for all kernels that can be
+    evaluated following an O(N) scaling. This extension adds a `power` method to return
+    the power spectral density (PSD) of a quasiseparable kernel at an input frequency.
+    """
+
     def __add__(self, other: Kernel | JAXArray) -> Kernel:
         if not isinstance(other, tkq.Quasisep):
             raise ValueError(
@@ -85,14 +96,8 @@ class Scale(Quasisep, tkq.Scale):
 
 
 class Exp(Quasisep, tkq.Exp):
-    r"""A wrapper for the exponential kernel with a scale parameter
-
-    This kernel is a simple wrapper around the `Exp` kernel, allowing for
-    a scale parameter to be applied to the kernel.
-
-    Args:
-        scale: The scale parameter for the exponential kernel.
-        sigma: The amplitude of the kernel.
+    """
+    An extension of the `tinygp.kernels.quasisep.Exp` kernel, adding a power method.
     """
 
     def power(
@@ -105,6 +110,10 @@ class Exp(Quasisep, tkq.Exp):
 
 
 class Cosine(Quasisep, tkq.Cosine):
+    """
+    An extension of the `tinygp.kernels.quasisep.Cosine` kernel, adding a power method.
+    """
+
     psd_width: JAXArray | float = eqx.field(
         default_factory=lambda: 0.001 * jnp.ones(())
     )
@@ -120,6 +129,10 @@ class Cosine(Quasisep, tkq.Cosine):
 
 
 class Celerite(Quasisep, tkq.Celerite):
+    """
+    An extension of the `tinygp.kernels.quasisep.Celerite` kernel, adding a power method.
+    """  # noqa: E501
+
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -138,6 +151,10 @@ class Celerite(Quasisep, tkq.Celerite):
 
 
 class Matern32(Quasisep, tkq.Matern32):
+    """
+    An extension of the `tinygp.kernels.quasisep.Matern32` kernel, adding a power method.
+    """  # noqa: E501
+
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -148,6 +165,10 @@ class Matern32(Quasisep, tkq.Matern32):
 
 
 class Matern52(Quasisep, tkq.Matern52):
+    """
+    An extension of the `tinygp.kernels.quasisep.Matern52` kernel, adding a power method.
+    """  # noqa: E501
+
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -158,6 +179,10 @@ class Matern52(Quasisep, tkq.Matern52):
 
 
 class SHO(Quasisep, tkq.SHO):
+    """
+    An extension of the `tinygp.kernels.quasisep.SHO` kernel, adding a power method.
+    """  # noqa: E501
+
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
@@ -173,6 +198,8 @@ class SHO(Quasisep, tkq.SHO):
 
 
 class Lorentzian(Quasisep):
+    """The Lorentzian kernel."""
+
     omega: JAXArray | float
     quality: JAXArray | float
     sigma: JAXArray | float = eqx.field(default_factory=lambda: jnp.ones(()))
@@ -640,6 +667,14 @@ def _compute(alpha: JAXArray, beta: JAXArray, sigma: JAXArray) -> tuple[JAXArray
 
 
 class MultibandLowRank(tkq.Wrapper):
+    """
+    A multiband kernel implementating a low-rank Kronecker covariance structure.
+
+    The specific form of the cross-band Kronecker covariance matrix is given by
+    Equation 13 of `Gordon et al. (2020) <https://arxiv.org/pdf/2007.05799>`_.
+    The implementation is inspired by this `tinygp` tutorial <https://tinygp.readthedocs.io/en/stable/tutorials/quasisep-custom.html#multivariate-quasiseparable-kernels>`_.
+    """
+
     params: dict[str, JAXArray]
 
     def coord_to_sortable(self, X) -> JAXArray:
