@@ -1,4 +1,4 @@
-"""Second-Order statistic functions for kernels"""
+"""Second-Order statistic functions for kernels in kernels.quasisep."""
 from collections.abc import Callable
 
 import equinox as eqx
@@ -14,7 +14,11 @@ from eztaox.kernels.quasisep import carma_acvf, carma_roots
 
 
 class gpStat2(eqx.Module):
-    """Base class for second-order statistics of Gaussian processes."""
+    """Base class for second-order statistics of GP kernels.
+
+    Args:
+        kernel (Quasisep): A kernel function from kernels.quasisep.
+    """
 
     kernel_def: Callable
     kernel_params: JAXArray
@@ -32,6 +36,16 @@ class gpStat2(eqx.Module):
     def acf(
         self, ts: JAXArray | NDArray, params: JAXArray | NDArray | None = None
     ) -> JAXArray:
+        """Compute the autocorrelation function (ACF) for given time lags.
+
+        Args:
+            ts (JAXArray | NDArray): Time lags for which to compute the ACF.
+            params (JAXArray | NDArray | None, optional): Parameters of the GP kernel if
+                different from those used to initialize the object. Defaults to None.
+
+        Returns:
+            JAXArray: The computed ACF values for the given time lags.
+        """
         params = self.kernel_params if params is None else params
         kernel, amp2 = self._build_kernel(params)
         acvf = jax.vmap(kernel.evaluate, in_axes=(None, 0))(0.0, jnp.asarray(ts))
@@ -40,6 +54,16 @@ class gpStat2(eqx.Module):
     def sf(
         self, ts: JAXArray | NDArray, params: JAXArray | NDArray | None = None
     ) -> JAXArray:
+        """Compute the structure function (SF) for given time lags.
+
+        Args:
+            ts (JAXArray | NDArray): Time lags for which to compute the SF.
+            params (JAXArray | NDArray | None, optional): Parameters of the GP kernel if
+                different from those used to initialize the object. Defaults to None.
+
+        Returns:
+            JAXArray: The computed SF values for the given time lags.
+        """
         params = self.kernel_params if params is None else params
         kernel, amp2 = self._build_kernel(params)
         acf = jax.vmap(kernel.evaluate, in_axes=(None, 0))(0.0, jnp.asarray(ts)) / amp2
@@ -51,6 +75,18 @@ class gpStat2(eqx.Module):
         params: JAXArray | NDArray | None = None,
         df: float | JAXArray | None = 0.01,
     ) -> JAXArray:
+        """Compute the power spectral density (PSD) for given frequencies.
+
+        Args:
+            fs (JAXArray | NDArray): Frequencies for which to compute the PSD.
+            params (JAXArray | NDArray | None, optional): Parameters of the GP kernel if
+                different from those used to initialize the object. Defaults to None.
+            df (float | JAXArray | None, optional): Frequency width for create convolved
+                PSDs (not in use). Defaults to 0.01.
+
+        Returns:
+            JAXArray: The computed PSD values for the given frequencies.
+        """
         params = self.kernel_params if params is None else params
         kernel, _ = self._build_kernel(params)
         return jnp.stack(jax.vmap(kernel.power, in_axes=(0, None))(jnp.asarray(fs), df))
@@ -70,7 +106,7 @@ def carma_psd(
     f: JAXArray | NDArray, arparams: JAXArray | NDArray, maparams: JAXArray | NDArray
 ) -> JAXArray:
     """
-    Return a function that computes CARMA Power Spectral Density (PSD).
+    Return a function that computes CARMA power spectral density (PSD).
 
     Args:
         arparams (array(float)): AR coefficients.
@@ -144,23 +180,23 @@ def carma_sf(
     return jnp.sqrt(2 * amp2 * (1 - carma_acf(t, arparams, maparams)))
 
 
-@jax.jit
-def drw_psd(
-    f: JAXArray | NDArray, tau: JAXArray | float, amp: JAXArray | float
-) -> JAXArray:
-    """
-    Return a function that computes DRW Power Spectral Density (PSD).
+# @jax.jit
+# def drw_psd(
+#     f: JAXArray | NDArray, tau: JAXArray | float, amp: JAXArray | float
+# ) -> JAXArray:
+#     """
+#     Return a function that computes DRW Power Spectral Density (PSD).
 
-    Args:
-        tau (float): DRW decorrelation/characteristic timescale
-        amp (float): DRW RMS amplitude
+#     Args:
+#         tau (float): DRW decorrelation/characteristic timescale
+#         amp (float): DRW RMS amplitude
 
-    Returns:
-        A function that takes in frequencies and returns PSD at the given frequencies.
-    """
+#     Returns:
+#         A function that takes in frequencies and returns PSD at the given frequencies.
+#     """
 
-    # convert amp, tau to CARMA parameters
-    a0 = 1 / tau
-    sigma2 = 2 * amp**2 * a0
+#     # convert amp, tau to CARMA parameters
+#     a0 = 1 / tau
+#     sigma2 = 2 * amp**2 * a0
 
-    return sigma2 / (a0**2 + (2 * jnp.pi * f) ** 2)
+#     return sigma2 / (a0**2 + (2 * jnp.pi * f) ** 2)
