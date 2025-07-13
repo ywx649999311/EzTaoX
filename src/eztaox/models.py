@@ -1,4 +1,7 @@
-"""Light curve models module."""
+"""
+A module of light curve models, which are the interface for modeling uni/multi-band
+light curves using Gaussian Processes (GPs).
+"""
 from collections.abc import Callable
 from functools import partial
 
@@ -17,20 +20,29 @@ from eztaox.kernels import direct, quasisep
 
 
 class MultiVarModel(eqx.Module):
-    """An interface for modeling multivariate/mutli-band time series using
-    Gaussian Process (GP).
+    """
+    An interface for modeling multivariate/mutli-band time series using GPs.
 
     This interface only takes GP kernels that can be evaluated using the
     scalable method of `DFM+17 <https://arxiv.org/abs/1703.09710>`. This
-    interface allows fitting for the mean of the time series, additional
-    variance to the uncertainty, and time delays between each uni-variate/
-    single-band time series.
+    interface allows fitting for a parameterized mean function of the time series,
+    additional variance to the measurement uncertainty, and time delays between each
+    uni-variate/single-band time series.
 
     Args:
-        X (JAXArray): Input data containing time and band indices as a tuple.
-        y (JAXArray | NDArray): Observed data values.
-        yerr (JAXArray | NDArray): Observational errors.
-        kernel (quasisep.Quasisep): A GP kernel from kernels.quasisep.
+        X (JAXArray|NDArray): Input data containing time and band indices as a tuple.
+        y (JAXArray|NDArray): Observed data values.
+        yerr (JAXArray|NDArray): Observational uncertainties.
+        base_kernel (Quasisep): A GP kernel from the kernels.quasisep module.
+        nBand (int): An interger number of bands in the input light curve.
+        multiband_kernel(Quasisep, optional): A multiband kernel specifying the
+            cross-band covariance, defaults to kernels.quasisep.MultibandLowRank.
+        mean_func(Callable, optional): A callable mean function for the GP, defaults to
+            None.
+        amp_scale_func(Callable, optional): A callable amplitude scaling function,
+            defaults to None.
+        lag_func(Callable, optional): A callable function for time delays between bands,
+            defaults to None.
         **kwargs: Additional keyword arguments.
             zero_mean (bool): If True, assumes zero-mean GP. Defaults to True.
             has_jitter (bool): If True, assumes the input observational erros
@@ -39,7 +51,7 @@ class MultiVarModel(eqx.Module):
                 each band. Defaults to False.
 
     Raises:
-        TypeError: If kernel is not one from kernels.quasisep.
+        TypeError: If base_kernel is not one from the kernels.quasisep module.
     """
 
     X: tuple[JAXArray, JAXArray]
@@ -68,7 +80,7 @@ class MultiVarModel(eqx.Module):
         lag_func: Callable | None = None,
         **kwargs,
     ) -> None:
-        if not isinstance(base_kernel, tkq.Quasisep):
+        if not isinstance(base_kernel, quasisep.Quasisep):
             raise TypeError("This model only takes quasiseperable kernels.")
 
         # format inputs
@@ -99,7 +111,7 @@ class MultiVarModel(eqx.Module):
     def get_mean(
         self, zero_mean: bool, params: dict[str, JAXArray], X: JAXArray
     ) -> JAXArray:
-        """Mean func for the Gaussian Process."""
+        """Return the mean of the GP."""
         if zero_mean is True:
             mean = 0.0
         elif self.mean_func is not None:
@@ -109,7 +121,7 @@ class MultiVarModel(eqx.Module):
         return mean
 
     def get_amp_scale(self, params: dict[str, JAXArray]) -> JAXArray:
-        """Amplitude transform for the Gaussian Process."""
+        """Return the ampltiude of GP in each individaul band."""
         if self.amp_scale_func is not None:
             return self.amp_scale_func(params)
         return self._default_amp_scale_func(params)
@@ -117,7 +129,7 @@ class MultiVarModel(eqx.Module):
     def lag_transform(
         self, has_lag: bool, params: dict[str, JAXArray], X: JAXArray
     ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
-        """Lag transform for the Gaussian Process."""
+        """Shift the time axis by the lag in each band."""
         if has_lag is False:
             lags = jnp.zeros(self.nBand)
         elif self.lag_func is not None:
@@ -172,13 +184,13 @@ class MultiVarModel(eqx.Module):
         """Make conditional GP prediction.
 
         Args:
-            params (dict[str, JAXArray]): A dictionary containing model
-                parameters.
-            X (JAXArray): The time and band information for creating the
-                conditional GP prediction.
+            params (dict[str, JAXArray]): A dictionary containing model parameters.
+            X (JAXArray): The time and band information for creating the conditional GP
+                prediction.
 
         Returns:
-            tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and
+            tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and its
+                uncertainty (square root of the predicted variance).
         """
         # transform time axis
         new_X, _ = self.lag_transform(self.has_lag, params, X)
@@ -259,6 +271,9 @@ class MultiVarModelFFT(MultiVarModel):
             kernel. Default is False.
         transfer_function (None | Callable): User-defined transfer function to
             use. Default is None.
+
+    ..note::
+        This model is still in development, please use with caution.
     """
 
     has_decorrelation: bool = False
@@ -337,17 +352,25 @@ class MultiVarModelFFT(MultiVarModel):
 
 
 class UniVarModel(MultiVarModel):
-    """A subclass of MultiVarModel for modeling univariate time series data
-    using Gaussian Processes with FFT-based transfer functions.
-
-    This class extends the MultiVarModel by adding support for full-rank
-    cross-band covariance matrices and user-defined transfer functions.
+    """
+    A subclass of MultiVarModel for modeling univariate/single-band time series data.
 
     Args:
-        has_decorrelation (bool): Whether to add a decorrelation matrix to the
-            kernel. Default is False.
-        transfer_function (None | Callable): User-defined transfer function to
-            use. Default is None.
+        t (JAXArray|NDArray): Time stamps of the input light curve.
+        y (JAXArray|NDArray): Observed data values at the corresponding time stamps.
+        yerr (JAXArray|NDArray): Observational uncertainties.
+        kernel (Quasisep): A GP kernel from the eztaox.kernels.quasisep module.
+        mean_func(Callable, optional): A callable mean function for the GP, defaults to
+            None.
+        amp_scale_func(Callable, optional): A callable amplitude scaling function,
+            defaults to None.
+        **kwargs: Additional keyword arguments.
+            zero_mean (bool): If True, assumes zero-mean GP. Defaults to True.
+            has_jitter (bool): If True, assumes the input observational erros
+                are underestimated. Defaults to False.
+
+    Raises:
+        TypeError: If kernel is not one from the kernels.quasisep module.
     """
 
     def __init__(
@@ -355,12 +378,12 @@ class UniVarModel(MultiVarModel):
         t: JAXArray | NDArray,
         y: JAXArray | NDArray,
         yerr: JAXArray | NDArray,
-        kernel: tkq.Quasisep,
+        kernel: quasisep.Quasisep,
         mean_func: Callable | None = None,
         amp_scale_func: Callable | None = None,
         **kwargs,
     ) -> None:
-        """Initialize the UniVarModel2 with time, observed data, and kernel."""
+        """Initialize the UniVarModel with time, observed data, and kernel."""
 
         inds = jnp.argsort(jnp.asarray(t))
         X = (jnp.asarray(t)[inds], jnp.zeros_like(t, dtype=int))
@@ -393,13 +416,13 @@ class UniVarModel(MultiVarModel):
         """Make conditional GP prediction.
 
         Args:
-            params (dict[str, JAXArray]): A dictionary containing model
-                parameters.
-            t (JAXArray): The time information for creating the
-                conditional GP prediction.
+            params (dict[str, JAXArray]): A dictionary containing model parameters.
+            t (JAXArray): The time information for creating the conditional GP
+                prediction.
 
         Returns:
-            tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and
+            tuple[JAXArray, JAXArray]: A tuple of the mean GP prediction and its
+                uncertainty (square root of the predicted variance).
         """
         # build gp, cond
         gp, inds = self._build_gp(params)
