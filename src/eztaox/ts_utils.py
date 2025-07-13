@@ -1,3 +1,4 @@
+"""Utility functions for time series processing."""
 import jax
 import jax.numpy as jnp
 from numpy.typing import NDArray
@@ -36,7 +37,19 @@ def formatlc(
     yerrs: dict[str, NDArray | JAXArray],
     band_order: dict[str, int],
 ) -> tuple[tuple[JAXArray, JAXArray], JAXArray, JAXArray]:
-    "Transform data in dictionary to TinyGP friendly format."
+    """Transform light curves in dictionary to EzTaoX friendly format.
+
+    Args:
+        ts (dict[str, NDArray  |  JAXArray]): Time stamps for observation in each band.
+        ys (dict[str, NDArray  |  JAXArray]): Observed values in each band.
+        yerrs (dict[str, NDArray  |  JAXArray]): Uncertainties in observed values for each
+            band.
+        band_order (dict[str, int]): Mapping of band names to band indices.
+
+    Returns:
+        tuple[tuple[JAXArray, JAXArray], JAXArray, JAXArray]: Light curves formatted as
+            ((time stamps, band indices), observed values, uncertainties).
+    """
 
     band_keys = band_order.keys()
     tss = jnp.concat([ts[key] for key in band_keys])

@@ -22,6 +22,23 @@ def random_search(
     jaxoptMethod: str = "SLSQP",
     batch_size: int = 1000,
 ) -> tuple[dict[str, JAXArray], JAXArray]:
+    """Fit a model using random search plus optimization.
+
+    Args:
+        model (UniVarModel | MultiVarModel): EzTaoX Light curve model.
+        initSampler (Callable): Function to sample initial parameters.
+        prng_key (jax.random.PRNGKey): Random number generator key.
+        nSample (int): Number of random samples to draw.
+        nBest (int): Number of best samples (selected based on their likelihod values)
+            to keep for optimization.
+        jaxoptMethod (str, optional): Optimization algorithm. Defaults to "SLSQP".
+        batch_size (int, optional): The batch size used in evaluating likehood of
+            randomly drawn samples. Defaults to 1000.
+
+    Returns:
+        tuple[dict[str, JAXArray], JAXArray]: Best parameters and their log likelihood.
+    """
+
     # define loss
     @jax.jit
     def loss(params) -> JAXArray:
@@ -65,6 +82,19 @@ def simpleOptimizer(
 ) -> tuple[
     dict[str, JAXArray], tuple[dict[str, JAXArray], JAXArray, dict[str, JAXArray]]
 ]:
+    """Fit a model using a simple optimizer.
+
+    Args:
+        model (UniVarModel | MultiVarModel): EzTaoX Light curve model.
+        optimizer (optax.GradientTransformation): Optimizer to use.
+        initSample (dict[str, JAXArray]): The initial guess of parameters.
+        nStep (int): Number of optimization steps.
+
+    Returns:
+        tuple[dict, tuple[dict, JAXArray, dict]]: Best parameters, (parameter history,
+            loss history, gradient history).
+    """
+
     @jax.jit
     def loss(params) -> JAXArray:
         return -model.log_prob(params)

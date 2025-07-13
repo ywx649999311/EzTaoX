@@ -1,4 +1,4 @@
-"""Light curve models module."""
+"""Simulator module for multi/uni-variate Gaussian Processes."""
 from collections.abc import Callable
 from functools import partial
 
@@ -16,6 +16,33 @@ from eztaox.ts_utils import _get_nearest_idx
 
 
 class MultiVarSim(eqx.Module):
+    """An interface for simulating multivariate/mutli-band time series using GPs.
+
+    This interface only takes GP kernels that can be evaluated using the
+    scalable method of `DFM+17 <https://arxiv.org/abs/1703.09710>`. This interface
+    allows specifying a parameterized mean function of the time series, cross-band
+    covariance, and time delays between each uni-variate/single-band time series.
+
+    Args:
+        base_kernel (Quasisep): A GP kernel from the kernels.quasisep module.
+        min_dt (float): Minimum time step for the simulation.
+        max_dt (float): Maximum time step (temporal baseline) for the simulation.
+        nBand (int): An interger number of bands in the input light curve.
+        init_params (dict[str, JAXArray]): Initial parameters for the GP.
+        multiband_kernel(Quasisep, optional): A multiband kernel specifying the
+            cross-band covariance, defaults to kernels.quasisep.MultibandLowRank.
+        mean_func(Callable, optional): A callable mean function for the GP, defaults to
+            None.
+        amp_scale_func(Callable, optional): A callable amplitude scaling function,
+            defaults to None.
+        lag_func(Callable, optional): A callable function for time delays between bands,
+            defaults to None.
+        **kwargs: Additional keyword arguments.
+            zero_mean (bool): If True, assumes zero-mean GP. Defaults to True.
+            has_lag (bool): If True, assumes time delays between time series in
+                each band. Defaults to False.
+    """
+
     base_kernel_def: Callable
     multiband_kernel: tkq.Wrapper
     X: tuple[JAXArray, JAXArray]
@@ -72,8 +99,17 @@ class MultiVarSim(eqx.Module):
     def full(
         self, key: jax.random.PRNGKey, params: dict[str, JAXArray] | None = None
     ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
-        """Build a full Gaussian Process with the given parameters."""
+        """Simulate a multivariace GP time series with unifrom time sampling.
 
+        Args:
+            key (jax.random.PRNGKey): Random number generator key.
+            params (dict[str, JAXArray] | None, optional): Light curve model parames.
+                Defaults to None. If None, uses the initial parameters.
+
+        Returns:
+            tuple[tuple[JAXArray, JAXArray], JAXArray]: Simulated time series in the
+                form of (time, band) and the simulated light curve values.
+        """
         params = params if params is not None else self.init_params
         gp, inds = self._build_gp(params)
 
@@ -86,7 +122,21 @@ class MultiVarSim(eqx.Module):
         random_key: jax.random.PRNGKey,
         params: dict[str, JAXArray] | None = None,
     ) -> tuple[tuple[JAXArray, JAXArray], JAXArray, JAXArray]:
-        """Sample a random Gaussian Process with the given parameters."""
+        """Simulate a multivariace GP time series with random time sampling.
+
+        Args:
+            nRand (int): Number of data points in the simulated time series.
+            lc_key (jax.random.PRNGKey): Random number generator key for simulating a
+                full light curve with uniform time sampling.
+            random_key (jax.random.PRNGKey): Random number generator key for selecting
+                random data points from the full light curve.
+            params (dict[str, JAXArray] | None, optional): Light curve model parames.
+                Defaults to None. If None, uses the initial parameters.
+
+        Returns:
+            tuple[tuple[JAXArray, JAXArray], JAXArray]: Simulated time series in the
+                form of (time, band) and the simulated light curve values.
+        """
 
         # get full light curve
         params = params if params is not None else self.init_params
@@ -105,8 +155,19 @@ class MultiVarSim(eqx.Module):
         lc_key: jax.random.PRNGKey,
         params: dict[str, JAXArray] | None = None,
     ) -> tuple[tuple[JAXArray, JAXArray], JAXArray, JAXArray]:
-        """Sample a random Gaussian Process with the given parameters at fixed
-        input time and labels."""
+        """Simulate a multivariace GP time series with fixed input time and band labels.
+
+        Args:
+            sim_X (tuple[JAXArray|NDArray, JAXArray|NDArray]): Input time and band.
+            lc_key (jax.random.PRNGKey): Random number generator key for simulating a
+                full light curve with uniform time sampling.
+            params (dict[str, JAXArray] | None, optional): Light curve model parames.
+                Defaults to None. If None, uses the initial parameters.
+
+        Returns:
+            tuple[tuple[JAXArray, JAXArray], JAXArray]: Simulated time series in the
+                form of (time, band) and the simulated light curve values.
+        """
         # convert sim_X to JAXArray and ensure band is int
         sim_X = (jnp.asarray(sim_X[0]), jnp.asarray(sim_X[1]).astype(int))
 
@@ -167,7 +228,7 @@ class MultiVarSim(eqx.Module):
     def get_mean(
         self, zero_mean: bool, params: dict[str, JAXArray], X: JAXArray
     ) -> JAXArray:
-        """Mean func for the Gaussian Process."""
+        """Return the mean of the GP."""
         if zero_mean is True:
             mean = 0.0
         elif self.mean_func is not None:
@@ -177,7 +238,7 @@ class MultiVarSim(eqx.Module):
         return mean
 
     def get_amp_scale(self, params: dict[str, JAXArray]) -> JAXArray:
-        """Amplitude transform for the Gaussian Process."""
+        """Return the ampltiude of GP in each individaul band."""
         if self.amp_scale_func is not None:
             return self.amp_scale_func(params)
         return self._default_amp_scale_func(params)
@@ -185,7 +246,7 @@ class MultiVarSim(eqx.Module):
     def lag_transform(
         self, has_lag: bool, params: dict[str, JAXArray], X: JAXArray
     ) -> tuple[tuple[JAXArray, JAXArray], JAXArray]:
-        """Lag transform for the Gaussian Process."""
+        """Shift the time axis by the lag in each band."""
         if has_lag is False:
             lags = jnp.zeros(self.nBand)
         elif self.lag_func is not None:
@@ -211,7 +272,20 @@ class MultiVarSim(eqx.Module):
 
 
 class UniVarSim(MultiVarSim):
-    """Univariate simulation model for light curves."""
+    """An interface for simulating univariate/single-band GP time series.
+
+    Args:
+        base_kernel (Quasisep): A GP kernel from the kernels.quasisep module.
+        min_dt (float): Minimum time step for the simulation.
+        max_dt (float): Maximum time step (temporal baseline) for the simulation.
+        init_params (dict[str, JAXArray]): Initial parameters for the GP.
+        mean_func(Callable, optional): A callable mean function for the GP, defaults to
+            None.
+        amp_scale_func(Callable, optional): A callable amplitude scaling function,
+            defaults to None.
+        **kwargs: Additional keyword arguments.
+            zero_mean (bool): If True, assumes zero-mean GP. Defaults to True.
+    """
 
     def __init__(
         self,
@@ -251,8 +325,19 @@ class UniVarSim(MultiVarSim):
         lc_key: jax.random.PRNGKey,
         params: dict[str, JAXArray] | None = None,
     ) -> tuple[JAXArray, JAXArray]:
-        """Sample a random Gaussian Process with the given parameters at fixed
-        time points."""
+        """Simulate a univariate GP time series with fixed input time.
+
+        Args:
+            sim_t (JAXArray | NDArray): Input time for the simulation.
+            lc_key (jax.random.PRNGKey): Random number generator key for simulating a
+                full light curve with uniform time sampling.
+            params (dict[str, JAXArray] | None, optional): Light curve model parames.
+                Defaults to None. If None, uses the initial parameters.
+
+        Returns:
+            tuple[JAXArray, JAXArray]: Simulated time series in the form of (time,
+                light curve values).
+        """
 
         sim_X = (jnp.asarray(sim_t), jnp.zeros_like(sim_t))
         return super().fixed_input(sim_X, lc_key, params)
