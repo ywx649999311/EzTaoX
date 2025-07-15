@@ -2,6 +2,7 @@
 Scalable kernels exploiting the quasiseparable structure in the relevant matrices to
 achieve a O(N) scaling. This module extends the `tinygp.kernels.quasisep` module.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -198,7 +199,24 @@ class SHO(Quasisep, tkq.SHO):
 
 
 class Lorentzian(Quasisep):
-    """The Lorentzian kernel."""
+    r"""The Lorentzian kernel.
+
+    The kernel takes the form:
+
+    .. math::
+
+        k(\tau) = \sigma^2\,\exp(-b\,\tau)\,cos(\omega\,\tau)
+
+    for :math:`\tau = |x_i - x_j|` and :math:`b = \frac{\omega}{2\,Q}`.
+
+    Args:
+        omega: The parameter :math:`\omega`.
+        quality: The parameter :math:`Q`.
+        sigma (optional): The parameter :math:`\sigma`. Defaults to a value of
+            1. Specifying the explicit value here provides a slight performance
+            boost compared to independently multiplying the kernel with a
+            prefactor.
+    """
 
     omega: JAXArray | float
     quality: JAXArray | float
