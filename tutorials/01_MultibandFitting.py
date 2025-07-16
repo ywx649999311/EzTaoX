@@ -29,19 +29,19 @@ jax.config.update("jax_enable_x64", True)
 
 # %% [markdown]
 # ### 1. Light Curve Simulation
-# We first simulated DRW light curves in two different bands. The intrinsic DRW timescales are set to be the same across bands, and the amplitudes are set to differ. We also add a five days time delay between these two bands.
+# We first simulate DRW light curves in two different bands. The intrinsic DRW timescales are set to be the same across bands, and the amplitudes are set to differ. We also add a five-day time delay between these two bands.
 
 # %%
-# we use eztao to do the simulation
+# we use eztao to perform the simulation
 from eztao.carma import DRW_term
 from eztao.ts import addNoise, gpSimRand
 
 # %%
 amps = {"g": 0.35, "r": 0.25}
 taus = {"g": 100, "r": 100}
-snrs = {"g": 5, "r": 3} # ratio of DRW amplitude to error bar median
-sampling_seeds = {"g": 2, "r": 5} # different seed for random sampling
-noise_seeds = {"g": 111, "r": 2} # different seed for mocking observational noise
+snrs = {"g": 5, "r": 3} # ratio of the DRW amplitude to the median error bar
+sampling_seeds = {"g": 2, "r": 5} # seed for random sampling
+noise_seeds = {"g": 111, "r": 2} # seed for mocking observational noise
 
 ts, ys, yerrs = {}, {}, {}
 ys_noisy = {}
@@ -72,7 +72,7 @@ for b in "gr":
 
 plt.xlabel('Time (day)')
 plt.ylabel('Flux (mag)')
-plt.legend(fontsize=12)
+plt.legend(fontsize=15)
 
 # %% [markdown]
 # ### 2. Light Curve Formatting
@@ -80,7 +80,9 @@ plt.legend(fontsize=12)
 # To fit multi-band data, you need to put the LCs into a specific format. If your LC are stored in a dictionary (with the key being the band name), see example in Section I, you can use the following function to format it. The output are X, y, yerr:
 #
 # - **X**: A tuple of arrays in the format of (time, band index)
-# - **y**: An array of observed values
+#     - *time*: An array of time stamps for observations in all bands.
+#     - *band index*: An array of integers, starting with 0. This array has the same size as the *time* array. Observations with the band index belong to the same band. Band assigned with a band index of 0 is treated as the 'reference' band. 
+# - **y**: An array of observed values (from all bands).
 # - **yerr**: An array observational uncertainties associated with **y**.
 
 # %%
@@ -93,7 +95,7 @@ X, y, yerr
 
 # %% [markdown]
 # ### 3. The Inference Interface
-# Classes included in the `eztaox.models` module constitute the main interface for performing inference. Below I will demonstrate how to conduct light curve modeling/fitting using this interface. 
+# Classes included in the `eztaox.models` module constitute the main interface for performing light curve modeling. 
 
 # %%
 import jax.numpy as jnp
@@ -111,9 +113,9 @@ import numpyro.distributions as dist
 # define model parameters
 has_lag = True # if fit interband lags
 zero_mean = True # if fit a mean function
-nBand = 2
+nBand = 2 # number of bands in the provide light curve (X, y, yerr)
 
-# initialize a GP kernel, note the initial parameters can be random
+# initialize a GP kernel, note the initial parameters are not used in the fitting
 k = Exp(scale=100.0, sigma=1.0)
 m = MultiVarModel(X, y, yerr, k, nBand, has_lag=has_lag, zero_mean=zero_mean)
 m
@@ -122,20 +124,20 @@ m
 # %% [markdown]
 # #### 3.2 Maximum Likelihood (MLE) Fiting
 #
-# To find the best-fit parameters, one can start at a random point in the parameter space and optimize the likelihood function until it stops changing. This can be achieved by calling the `MutliVarModel.log_prob(params)` function. However, I find this approach can often stuck in local minima. I wrote a fitter function (`random_search`) to alleviate this issue (hopefully). The `random_search` function first do a random search (i.e., evaluate likelihood at a large number of random guesses in the parameter space) and then select a few (defaults to five) positions with the highest likelihood to proceed with non-linear optimization (e.g., using L-BFGS-B).
+# To find the best-fit parameters, one can start at a random point in the parameter space and optimize the likelihood function until it stops changing. This likelihood function given a set of new parameters can be obtained by calling `MutliVarModel.log_prob(params)`. However, I find this approach often stuck in local minima. `EzTaoX` provides a fitter function (`random_search`) to alleviate this issue (to some level). The `random_search` function first does a random search (i.e., evaluate the likelihood at a large number of randomly chosen positions in the parameter space) and then select a few (defaults to five) positions with the highest likelihood to proceed with additional non-linear optimization (e.g., using L-BFGS-B).
 #
 # The `random_search` function takes the following arguments:
 # - **model**: an instance of `MultiVarModel`
 # - **initSampler**: a custom function (you need to provide) for generating random samples for the random search step.
-# - **prng_key**: a JAX random number generator key.
+# - **prng_key**: a `JAX` random number generator key.
 # - **nSample**: number of random samples to draw.
-# - **nBest**: number of best samples to keep for optimization.
-# - **jaxoptMethod**: fine optimization method. => see [**here**](https://jaxopt.github.io/stable/_autosummary/jaxopt.ScipyMinimize.html#jaxopt.ScipyMinimize.method) for supported methods.
-# - **batch_size**: the default is 1000, for simpler models (and if you have enough memory), you set this to `nSample`.
+# - **nBest**: number of best samples to keep for continued optimization.
+# - **jaxoptMethod**: fine optimization method to use. => see [**here**](https://jaxopt.github.io/stable/_autosummary/jaxopt.ScipyMinimize.html#jaxopt.ScipyMinimize.method) for supported methods.
+# - **batch_size**: The number of likelihood to evaluate each time. Defaults to 1000, for simpler models (and if you have enough memory), you can set this to `nSample`.
 
 # %% [markdown]
 # #### InitSampler
-# The `initSampler` provides a prior distribution from which to draw random samples to perform likelihood evaluation. It shares a similar structure as that used to perform MCMC using `numpyro`.
+# The `initSampler` defines a prior distribution from which to draw random samples to evaluate the likelihood. It shares a similar structure as that used to perform MCMC using `numpyro` (see Section 4). The distribution for a parameter can take any shapes, as long as it has a `numpyro` implementation. A list of `numpyro` distributions can be found [here](https://num.pyro.ai/en/stable/distributions.html). 
 
 # %%
 def initSampler():
@@ -177,8 +179,11 @@ prior_sample = numpyro_seed(initSampler, rng_seed=sample_key)()
 prior_sample
 
 # %% [markdown]
-# ##### **Note**:`log_amp_scale` parameter
-# This parameter characterize the log of the ratio between the amplitude of the GP in each band relative to the latent GP (i.e., the S parameter in the kernel function). If your multi-band light curve has three bands, `log_amp_scale` is an array of two numbers, where the `log_amp_scale` for the reference band is set to 0 (log of 1) by default. The reference band is the one with a band_index of 0. 
+# #### **A note on model parameters**:
+# - **`log_kernel_param`**: The parameters of the latent GP process. 
+# - **`log_amp_scale`**: This parameter characterize the log of the ratio between the amplitude of the GP in each band relative to the latent GP (i.e., the $S$ parameter in the kernel function). Since the $S$ parameter is set to 1 by default, `log_amp_scale` is an array of size M-1, where M is the number of bands.
+# - **`mean`**: The mean of the light curve in each band, with a size M. 
+# - **`lag`**: The inter-band lags with respect to the reference band. `lag` is any array with a size M-1
 
 # %% [markdown]
 # #### Try MLE Fitting
@@ -197,7 +202,7 @@ bestP
 
 # %% [markdown]
 # ### 4.0 MCMC
-# MCMC sampling is carried out through the `numpyro` package, which is native to JAX. In this example, I will use the NUTS algorithms, however, there are a large collection of different sampling algorithms that you can pick from. In addition, you can freely specify more flexible (no longer just flat!!) prior distributions for each parameter in the light curve model. 
+# MCMC sampling is carried out using the `numpyro` package, which is native to `JAX`. In this example, I will use the NUTS algorithm, however, there are a large collection of sampling algorithms that you can pick from (see [here](https://num.pyro.ai/en/stable/infer.html)). In addition, you can freely specify more flexible (no longer just flat!!) prior distributions for each parameter in the light curve model. 
 
 # %% [markdown]
 # #### Define `numpyro` MCMC model
@@ -280,12 +285,14 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # %%
 az.plot_trace(data, var_names=['log_drw_scale', 'log_drw_sigma', 'log_amp_scale', 'lag'])
+plt.subplots_adjust(hspace=0.4)
 
 # %%
 az.plot_pair(data, var_names=['log_drw_scale', 'log_drw_sigma', 'log_amp_scale', 'lag'])
 
 # %% [markdown]
 # ### 5.0 Second-order Statistics
+# `EzTaoX` provides a unified class (`extaox.kernel_stat2.gpStat2`) for generating the second-order statistic functions (ACF, SF, and PSD) of any supported kernels. All you need to do is initialize a `gpStat2` instance with your desired kernel. 
 
 # %%
 from eztaox.kernel_stat2 import gpStat2
@@ -355,7 +362,7 @@ plt.xlabel('Time')
 plt.ylabel('SF')
 
 # %% [markdown]
-# #### 5.4 g-r Lag distribution
+# ### 6.0 Lag distribution
 
 # %%
 _ = plt.hist(lag_draws, density=True)
