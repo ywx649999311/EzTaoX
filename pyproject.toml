@@ -1,13 +1,13 @@
 [project]
 name = "eztaox"
-version = "0.1.0"
-description = "TBD"
+version = "0.0.1"
+description = "`EzTaoX` is designed to perform multi-wavelength/multi-band modeling of AGN light curves using Gaussian Processes (GPs). `EzTaoX` aims to establish a new framework that can utilize the multi-band coverage of modern time-domain surveys to simultaneously extract stochastic variability and inter-band time delay information from multi-band light curves, and at the same time provide significant improvement in computational speed in comparison to existing tools of similar capabilities."
 authors = [
     {name = "Weixiang Yu",email = "astro.flyfish@gmail.com"}
 ]
 license = {text = "MIT"}
 readme = "README.md"
-requires-python = ">=3.10, <4.0"
+requires-python = ">=3.10, <3.13"
 dependencies = [
     "tinygp (>=0.3.0,<0.4.0)",
     "jax (<=0.4.31)",
