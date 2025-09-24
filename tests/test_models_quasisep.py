@@ -202,3 +202,32 @@ def test_lag_transform(data, kernel, random) -> None:
 
     # new_X[0] should be sorted by inds
     assert jnp.all(new_X[0][inds][:-1] <= new_X[0][inds][1:])
+
+
+def test_multivar_pred_unsorted_inputs(data, kernel, random) -> None:
+    """Test prediction with unsorted inputs."""
+    t, y, b = data
+    yerr = jnp.ones_like(t) * 0.05
+
+    params = {
+        "log_kernel_param": jnp.log(jax.flatten_util.ravel_pytree(kernel)[0]),
+        "log_amp_scale": jnp.array([0.0, 0.0]),
+        "lag": jnp.array([1.0, 2.0]),
+    }
+
+    model = MultiVarModel((t, b), y, yerr, kernel, nBand=3, has_lag=True)
+
+    # unsorted inputs
+    t_pred = jnp.array([4.2, 0.3, 3.4, 1.7])
+    b_pred = jnp.array([1, 2, 1, 0])
+
+    # predict with unsorted inputs
+    mean_unsorted, std_unsorted = model.pred(params, (t_pred, b_pred))
+
+    # predict with sorted inputs
+    idx = jnp.argsort(t_pred)
+    mean_sorted, std_sorted = model.pred(params, (t_pred[idx], b_pred[idx]))
+
+    # check if the prediction is the same
+    assert_allclose(mean_unsorted[idx], mean_sorted)
+    assert_allclose(std_unsorted[idx], std_sorted)
