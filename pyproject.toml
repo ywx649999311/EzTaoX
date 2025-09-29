@@ -56,7 +56,7 @@ ignore = [
     "PLR0915", # Allow many statements
     "PLR2004", # Allow magic numbers in comparisons
 ]
-# exclude = ["dev/"]
+exclude = ["tutorials/"]
 
 [tool.ruff.format]
 skip-magic-trailing-comma = false

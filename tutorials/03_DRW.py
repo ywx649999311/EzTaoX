@@ -2,6 +2,8 @@
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+from eztao.carma import DRW_term
+from eztao.ts import addNoise, gpSimRand
 
 mpl.rcParams.update(
     {
@@ -25,41 +27,27 @@ import jax.numpy as jnp
 jax.config.update("jax_enable_x64", True)
 
 # %% [markdown]
-# ## Damped Harmonic Oscillator (DHO) Fitting
-# This notebook demonstrate how to fit a DHO process to a single-band light curve. Please see notebook [01_MultibandFitting](01_MultibandFitting.ipynb) for a tutorial on fitting multiband light curves.
-#
-# **Note:**
-# The CARMA autoregressive parameter notation follows the covention of [Kelly+14](https://arxiv.org/abs/1402.5978).
+# ## Damped Random Walk (DRW) Fitting
 
 # %% [markdown]
 # ### 1. Light Curve Simulation
 
 # %%
-from eztao.carma import DHO_term
-from eztao.ts import addNoise, gpSimRand
-
-# %%
-# CARMA(2,1)/DHO parameters
-alphas = {"g": [0.05, 0.0002]}
-betas = {"g": [0.0006, 0.03]}
-
-# simulation configureations
-snrs = {"g": 5}
-sampling_seeds = {"g": 2}
-noise_seeds = {"g": 11}
-lags = {"g": 0}
-bands = "g"
-n_yr = 10
+amps = {"g": 0.35}
+taus = {"g": 100}
+snrs = {"g": 5}  # ratio of the DRW amplitude to the median error bar
+sampling_seeds = {"g": 2}  # seed for random sampling
+noise_seeds = {"g": 11}  # seed for mocking observational noise
 
 ts, ys, yerrs = {}, {}, {}
 ys_noisy = {}
-seed = 2
-for band in bands:
-    DHO_kernel = DHO_term(*np.log(alphas[band]), *np.log(betas[band]))
+seed = 1
+for band in "g":
+    DRW_kernel = DRW_term(np.log(amps[band]), np.log(taus[band]))
     t, y, yerr = gpSimRand(
-        DHO_kernel,
+        DRW_kernel,
         snrs[band],
-        365 * n_yr,  # 10 year LC
+        365 * 10,  # 10 year LC
         100,
         lc_seed=seed,
         downsample_seed=sampling_seeds[band],
@@ -72,7 +60,7 @@ for band in bands:
     # add simulated photometric noise
     ys_noisy[band] = addNoise(ys[band], yerrs[band], seed=noise_seeds[band] + seed)
 
-for b in bands:
+for b in "g":
     plt.errorbar(
         ts[b][::1], ys_noisy[b][::1], yerrs[b][::1], fmt=".", label=f"{b}-band"
     )
@@ -89,7 +77,7 @@ plt.legend(fontsize=15)
 import numpyro
 import numpyro.distributions as dist
 from eztaox.fitter import random_search
-from eztaox.kernels.quasisep import CARMA
+from eztaox.kernels.quasisep import Exp
 from eztaox.models import UniVarModel
 from numpyro.handlers import seed as numpyro_seed
 
@@ -98,16 +86,9 @@ from numpyro.handlers import seed as numpyro_seed
 
 # %%
 zero_mean = False
-p = 2  # CARMA p-order
-test_params = {"log_kernel_param": jnp.log(np.array([0.1, 1.1, 1.0, 3.0]))}
 
-# define kernel
-k = CARMA.init(
-    jnp.exp(test_params["log_kernel_param"][:p]),
-    jnp.exp(test_params["log_kernel_param"][p:]),
-)
-
-# define univar model
+# initialize a GP kernel, note the initial parameters are not used in the fitting
+k = Exp(scale=100.0, sigma=1.0)
 m = UniVarModel(ts["g"], ys_noisy["g"], yerrs["g"], k, zero_mean=zero_mean)
 m
 
@@ -118,13 +99,14 @@ m
 
 # %%
 def initSampler():
-    # DHO Alpha & Beta parameters
-    log_alpha = numpyro.sample(
-        "log_alpha", dist.Uniform(low=-16.0, high=0.0).expand([2])
+    # GP kernel param
+    log_drw_scale = numpyro.sample(
+        "drw_scale", dist.Uniform(jnp.log(0.01), jnp.log(1000))
     )
-    log_beta = numpyro.sample("log_beta", dist.Uniform(low=-10.0, high=2.0).expand([2]))
-
-    log_kernel_param = jnp.hstack([log_alpha, log_beta])
+    log_drw_sigma = numpyro.sample(
+        "drw_sigma", dist.Uniform(jnp.log(0.01), jnp.log(10))
+    )
+    log_kernel_param = jnp.stack([log_drw_scale, log_drw_sigma])
     numpyro.deterministic("log_kernel_param", log_kernel_param)
 
     # mean
@@ -155,12 +137,8 @@ bestP, ll = random_search(model, initSampler, fit_key, nSample, nBest)
 bestP
 
 # %%
-# True DHO param
-# Note that EzTao follows the CARMA notation from Moreno+19,
-# and EzTaoX adopts the CARMA notation from Kelly+14.
-# The main difference is that the alpha parameter index is reversed.
-print("True DHO Params (in natual log):")
-print(np.log(np.hstack([alphas["g"][::-1], betas["g"]])))
+print("True DRW Params (in natual log):")
+print(np.log(np.hstack([taus["g"], amps["g"]])))
 print("MLE DHO Params (in natual log):")
 print(bestP["log_kernel_param"])
 
@@ -169,17 +147,19 @@ print(bestP["log_kernel_param"])
 
 # %%
 import arviz as az
-from numpyro.infer import MCMC, NUTS
+from numpyro.infer import MCMC, NUTS, init_to_median
 
 
 # %%
 def numpyro_model(t, yerr, y=None):
-    log_alpha = numpyro.sample(
-        "log_alpha", dist.Uniform(low=-16.0, high=0.0).expand([2])
+    # GP kernel param
+    log_drw_scale = numpyro.sample(
+        "log_drw_scale", dist.Uniform(jnp.log(0.01), jnp.log(1000))
     )
-    log_beta = numpyro.sample("log_beta", dist.Uniform(low=-10.0, high=2.0).expand([2]))
-
-    log_kernel_param = jnp.hstack([log_alpha, log_beta])
+    log_drw_sigma = numpyro.sample(
+        "log_drw_sigma", dist.Uniform(jnp.log(0.01), jnp.log(10))
+    )
+    log_kernel_param = jnp.stack([log_drw_scale, log_drw_sigma])
     numpyro.deterministic("log_kernel_param", log_kernel_param)
 
     # mean: use a normal prior for better convergence
@@ -189,12 +169,8 @@ def numpyro_model(t, yerr, y=None):
 
     # the following is different from the initSampler
     zero_mean = False
-    p = 2
 
-    k = CARMA.init(
-        jnp.exp(test_params["log_kernel_param"][:p]),
-        jnp.exp(test_params["log_kernel_param"][p:]),
-    )
+    k = Exp(scale=100.0, sigma=1.0)  # init params for k are not used
     m = UniVarModel(ts["g"], ys_noisy["g"], yerrs["g"], k, zero_mean=zero_mean)
     m.sample(sample_params)
 
@@ -205,7 +181,7 @@ nuts_kernel = NUTS(
     numpyro_model,
     dense_mass=True,
     target_accept_prob=0.9,
-    init_strategy=numpyro.infer.init_to_sample,
+    init_strategy=init_to_median,
 )
 
 mcmc = MCMC(
@@ -230,11 +206,11 @@ import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 # %%
-az.plot_trace(data, var_names=["log_alpha", "log_beta", "mean"])
+az.plot_trace(data, var_names=["log_drw_scale", "log_drw_sigma", "mean"])
 plt.subplots_adjust(hspace=0.4)
 
 # %%
-az.plot_pair(data, var_names=["log_alpha", "log_beta", "mean"])
+az.plot_pair(data, var_names=["log_drw_scale", "log_drw_sigma", "mean"])
 
 # %% [markdown]
 # ### 4. Second-order Statistics
@@ -248,24 +224,24 @@ fs = np.logspace(-4, 0)
 # %%
 # get MCMC samples
 flatPost = data.posterior.stack(sample=["chain", "draw"])
-log_carma_draws = flatPost["log_kernel_param"].values.T
+log_drw_draws = flatPost["log_kernel_param"].values.T
 
 # %%
 # create second-order stat object
-dho_k = CARMA.init(alphas["g"][::-1], betas["g"])
-gpStat2_dho = gpStat2(dho_k)
+drw_k = Exp(scale=taus["g"], sigma=amps["g"])
+gpStat2_drw = gpStat2(drw_k)
 
 # %% [markdown]
 # #### 4.1 Structure Function
 
 # %%
 # compute sf for MCMC draws
-mcmc_sf = jax.vmap(gpStat2_dho.sf, in_axes=(None, 0))(ts, jnp.exp(log_carma_draws))
+mcmc_sf = jax.vmap(gpStat2_drw.sf, in_axes=(None, 0))(ts, jnp.exp(log_drw_draws))
 
 # %%
 ## plot
 # ture SF
-plt.loglog(ts, gpStat2_dho.sf(ts), c="k", label="True SF", zorder=100, lw=2)
+plt.loglog(ts, gpStat2_drw.sf(ts), c="k", label="True SF", zorder=100, lw=2)
 plt.legend(fontsize=15)
 # MCMC SFs
 for sf in mcmc_sf[::50]:
@@ -279,12 +255,12 @@ plt.ylabel("SF")
 
 # %%
 # compute sf for MCMC draws
-mcmc_psd = jax.vmap(gpStat2_dho.psd, in_axes=(None, 0))(fs, jnp.exp(log_carma_draws))
+mcmc_psd = jax.vmap(gpStat2_drw.psd, in_axes=(None, 0))(fs, jnp.exp(log_drw_draws))
 
 # %%
 ## plot
 # ture PSD
-plt.loglog(fs, gpStat2_dho.psd(fs), c="k", label="True PSD", zorder=100, lw=2)
+plt.loglog(fs, gpStat2_drw.psd(fs), c="k", label="True PSD", zorder=100, lw=2)
 plt.legend(fontsize=15)
 
 # MCMC PSDs
@@ -293,5 +269,3 @@ for psd in mcmc_psd[::50]:
 
 plt.xlabel("Frequency")
 plt.ylabel("PSD")
-
-# %%
