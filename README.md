@@ -1,3 +1,4 @@
+[![DOI](https://zenodo.org/badge/928658755.svg)](https://doi.org/10.5281/zenodo.17467662)
 ## EzTao*X*
 `EzTaoX` is a flexible framework for multi-wavelength and multi-survey AGN light-curve modeling using Gaussian Processes (GPs).  Built on top of `tinygp`---a scalable GP library in `JAX`---`EzTaoX` is fast, modular, and integrates seamlessly with the `JAX` ecosystem for statistical inference and modern machine learning.
 
