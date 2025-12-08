@@ -23,8 +23,7 @@ pip install git+https://github.com/ywx649999311/EzTaoX.git
 Please see tutorials in the `tutorials` folder.
 
 ### Citation
-If you find `EzTaoX` useful for your research, please consider citing the following paper:
-
+If you find `EzTaoX` useful for your research, please consider citing the following paper [arXiv:2511.21479](https://arxiv.org/abs/2511.21479):
 ```
 @ARTICLE{Yu2025,
        author = {{Yu}, Weixiang and {Ruan}, John J. and {Burke}, Colin J. and {Assef}, Roberto J. and {Ananna}, Tonima T. and {Bauer}, Franz E. and {De Cicco}, Demetra and {Horne}, Keith and {Hern{\'a}ndez-Garc{\'\i}a}, Lorena and {Ili{\'c}}, Dragana and {Kova{\v{c}}evi{\'c}}, Andjelka B. and {Marculewicz}, Marcin and {Panda}, Swayamtrupta and {Ricci}, Claudio and {Richards}, Gordon T. and {Riffel}, Rogemar A. and {Schneider}, Donald P. and {S{\'a}nchez-S{\'a}ez}, Paula and {Satheesh Sheeba}, Sarath and {Tombesi}, Francesco and {Temple}, Matthew J. and {Vogeley}, Michael S. and {Yoon}, Ilsang and {Zou}, Fan},
