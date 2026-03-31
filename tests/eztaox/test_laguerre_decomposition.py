@@ -7,7 +7,7 @@ import pytest
 from jax import numpy as jnp
 from tinygp.test_utils import assert_allclose
 
-from eztaox.fitter import random_search
+from eztaox.fitter import random_search, random_search_adam
 from eztaox.kernels import quasisep
 from eztaox.kernels.quasisep import LaguerreSeries, Quasisep, _Laguerre
 from eztaox.models import UniVarModel
@@ -200,6 +200,70 @@ def test_laguerre_decomposition_kernel_fit(kernel_cls, order, rtol) -> None:
     )
     decomposed_params = jnp.exp(decomposed_ln_params["log_kernel_param"])
     assert_allclose(decomposed_params, jnp.array([true_tau, true_sigma]), rtol=1e-1)
+
+    assert_allclose(orig_ll, decomposed_ll, rtol=rtol)
+    assert_allclose(orig_params, decomposed_params, rtol=rtol)
+
+
+@pytest.mark.parametrize(
+    ("kernel_cls", "order", "rtol"),
+    [
+        (quasisep.Exp, 2, 5e-2),
+        (quasisep.Matern32, 4, 1e-1),
+    ],
+)
+def test_laguerre_decomposition_kernel_fit_adam(kernel_cls, order, rtol) -> None:
+    def init_sampler():
+        log_drw_scale = numpyro.sample(
+            "drw_scale", dist.Uniform(jnp.log(0.01), jnp.log(1000))
+        )
+        log_drw_sigma = numpyro.sample(
+            "drw_sigma", dist.Uniform(jnp.log(0.01), jnp.log(10))
+        )
+        log_kernel_param = jnp.stack([log_drw_scale, log_drw_sigma])
+        numpyro.deterministic("log_kernel_param", log_kernel_param)
+
+        sample_params = {"log_kernel_param": log_kernel_param}
+        return sample_params
+
+    fit_key = jax.random.PRNGKey(1)
+    n_sample = 100
+    n_best = 10
+
+    true_tau = 78.55
+    true_sigma = 5.0
+    orig_kernel = kernel_cls(scale=true_tau, sigma=true_sigma)
+    t, y = simulate(orig_kernel, tau=true_tau, sigma=true_sigma)
+    yerr = jnp.full_like(t, 1e-6)
+
+    orig_model = UniVarModel(t, y, yerr, orig_kernel, zero_mean=True)
+    orig_ln_params, orig_ll = random_search_adam(
+        orig_model,
+        init_sampler,
+        fit_key,
+        n_sample,
+        n_best,
+        nStep=400,
+        learning_rate=1e-2,
+    )
+    assert jnp.ndim(orig_ll) == 0
+    orig_params = jnp.exp(orig_ln_params["log_kernel_param"])
+    assert_allclose(orig_params, jnp.array([true_tau, true_sigma]), rtol=2e-1)
+
+    decomposed_kernel = LaguerreSeries(orig_kernel, order=order, n_quad=100)
+    decomposed_model = UniVarModel(t, y, yerr, decomposed_kernel, zero_mean=True)
+    decomposed_ln_params, decomposed_ll = random_search_adam(
+        decomposed_model,
+        init_sampler,
+        fit_key,
+        n_sample,
+        n_best,
+        nStep=400,
+        learning_rate=1e-2,
+    )
+    assert jnp.ndim(decomposed_ll) == 0
+    decomposed_params = jnp.exp(decomposed_ln_params["log_kernel_param"])
+    assert_allclose(decomposed_params, jnp.array([true_tau, true_sigma]), rtol=2e-1)
 
     assert_allclose(orig_ll, decomposed_ll, rtol=rtol)
     assert_allclose(orig_params, decomposed_params, rtol=rtol)
