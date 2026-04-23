@@ -8,6 +8,7 @@ This module extends the `tinygp.kernels.quasisep` module.
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 import equinox as eqx
@@ -269,80 +270,50 @@ class Lorentzian(Quasisep):
 
 
 class CARMA(Quasisep):
-    r"""A continuous-time autoregressive moving average (CARMA) process kernel.
+    r"""A continuous-time autoregressive moving-average kernel.
 
-    This process has the power spectrum density (PSD)
+    This kernel represents a CARMA(:math:`p, q`) process in companion-form
+    state-space notation so it can be used with the quasiseparable solvers in
+    `tinygp`.
+
+    The autoregressive polynomial is parameterized in ascending power order as
+
+    .. math::
+
+        \alpha(D) = \alpha_0 + \alpha_1 D + \cdots + \alpha_{p-1} D^{p-1} + D^p,
+
+    where the leading coefficient of :math:`D^p` is fixed to 1 and supplied
+    implicitly. The moving-average polynomial is
+
+    .. math::
+
+        \beta(D) = \beta_0 + \beta_1 D + \cdots + \beta_q D^q.
+
+    The corresponding power spectral density (PSD) is
 
     .. math::
 
         P(\omega) = \sigma^2\,\frac{|\sum_{q} \beta_q\,(i\,\omega)^q|^2}{|\sum_{p}
             \alpha_p\,(i\,\omega)^p|^2}
 
-    defined following Equation 1 in `Kelly et al. (2014)
+    following Equation 1 in `Kelly et al. (2014)
     <https://arxiv.org/abs/1402.5978>`_, where :math:`\alpha_p` and :math:`\beta_0`
     are set to 1. In this implementation, we absorb :math:`\sigma` into the
-    definition of :math:`\beta` parameters. That is :math:`\beta_{new}` =
-    :math:`\beta * \sigma`.
-
-    .. note::
-        To construct a stationary CARMA kernel/process, the roots of the
-        characteristic polynomials for Equation 1 in `Kelly et al. (2014)` must
-        have negative real parts. This condition can be met automatically by
-        requiring positive input parameters when instantiating the kernel using
-        the :func:`init` method for CARMA(1,0), CARMA(2,0), and CARMA(2,1)
-        models or by requiring positive input parameters when instantiating the
-        kernel using the :func:`from_quads` method.
-
-    .. note:: Implementation details
-
-        The logic behind this implementation is simple---finding the correct
-        combination of real/complex exponential kernels that resembles the
-        autocovariance function of the CARMA model. Note that the order also
-        matters. This task is achieved using the `acvf` method. Then the rest
-        is copied from the `Exp` and `Celerite` kernel.
-
-        Given the requirement of negative roots for stationarity, the
-        `from_quads` method is implemented to facilitate consturcting
-        stationary higher-order CARMA models beyond CARMA(2,1). The inputs for
-        `from_quads` are the coefficients of the quadratic equations factorized
-        out of the full characteristic polynomial. `poly2quads` is used to
-        factorize a polynomial into a product of said quadractic equations, and
-        `quads2poly` is used for the reverse process.
-
-        One last trick is the use of `_real_mask`, `_complex_mask`, and
-        `complex_select`, which are arrays of 0s and 1s. They are implemented
-        to avoid control flows. More specifically, some intermediate quantities
-        are computed regardless, but are only used if there is a matching real
-        or complex exponential kernel for the specific CARMA kernel.
+    definition of the :math:`\beta` parameters. That is,
+    :math:`\beta_{\mathrm{new}} = \beta\,\sigma`.
 
     Args:
-        alpha: The parameter :math:`\alpha` in the definition above, exlcuding
-            :math:`\alpha_p`. This should be an array of length `p`.
-        beta: The product of parameters :math:`\beta` and parameter :math:`\sigma`
-            in the definition above. This should be an array of length `q+1`,
-            where `q+1 <= p`.
+        alpha: Autoregressive coefficients in ascending power order, excluding
+            the leading coefficient fixed to 1.
+        beta: Moving-average coefficients :math:`[\beta_0, \ldots, \beta_q]`
+            in ascending power order.
+        sigma_w: Standard deviation of the white-noise driving term used when
+            constructing the stationary state covariance.
     """
 
-    alpha: JAXArray = eqx.field(converter=jnp.asarray)
-    beta: JAXArray = eqx.field(converter=jnp.asarray)
-    sigma: float = 1.0
-
-    def __init__(self, alpha: JAXArray | NDArray, beta: JAXArray | NDArray) -> None:
-        alpha = jnp.atleast_1d(jnp.asarray(alpha))
-        beta = jnp.atleast_1d(jnp.asarray(beta))
-        assert alpha.ndim == 1
-        assert beta.ndim == 1
-        p = alpha.shape[0]
-        assert beta.shape[0] <= p
-
-        self.alpha = alpha
-        self.beta = beta
-        # self.sigma = jnp.ones(())
-
-    @classmethod
-    def init(cls, alpha: JAXArray, beta: JAXArray) -> CARMA:  # noqa: D102
-        # TODO: Write docstring.
-        return cls(alpha, beta)
+    alpha: JAXArray  # [a0, ..., ap-1]
+    beta: JAXArray  # [b0, ..., bq]
+    sigma_w: float = eqx.field(default=1.0, static=True)
 
     @classmethod
     def from_quads(
@@ -380,118 +351,88 @@ class CARMA(Quasisep):
 
         return cls(alpha, beta)
 
-    def design_matrix(self) -> JAXArray:  # noqa: D102
-        # TODO: Write docstring.
-        (
-            arroots,
-            acf,
-            _real_mask,
-            _complex_mask,
-            _complex_select,
-            om_real,
-            om_complex,
-        ) = _compute(self.alpha, self.beta, self.sigma)
+    @property
+    def arroots(self) -> JAXArray:
+        """Return the autoregressive roots sorted by real part."""
+        return carma_roots(jnp.append(self.alpha, 1.0))
 
-        # for real exponential components
-        dm_real = jnp.diag(arroots.real * _real_mask)
+    def _companion_eigenvectors(self, arroots) -> JAXArray:
+        """Construct eigenvectors of the transposed companion matrix."""
+        p = self.alpha.shape[0]
+        complex_dtype = dtypes.to_complex_dtype(arroots.dtype)
 
-        # for complex exponential components
-        dm_complex_diag = jnp.diag(arroots.real * _complex_mask)
+        vecs = jnp.zeros((p, p), dtype=complex_dtype)
+        vecs = vecs.at[-1, :].set(jnp.ones(p, dtype=complex_dtype))
 
-        # upper triangle entries
-        dm_complex_u = jnp.diag((arroots.imag * _complex_select)[:-1], k=1)
+        for row in range(p - 2, -1, -1):
+            vecs = vecs.at[row, :].set(arroots * vecs[row + 1, :] + self.alpha[row + 1])
 
-        return dm_real + dm_complex_diag + -dm_complex_u.T + dm_complex_u
+        return vecs
 
-    def stationary_covariance(self) -> JAXArray:  # noqa: D102
-        # TODO: Write docstring.
-        (
-            arroots,
-            acf,
-            _real_mask,
-            _complex_mask,
-            _complex_select,
-            om_real,
-            om_complex,
-        ) = _compute(self.alpha, self.beta, self.sigma)
-        p = acf.shape[0]
+    @staticmethod
+    @partial(jax.jit, static_argnums=(1,))
+    def _padded_ma(beta, p):
+        """Pad moving-average coefficients with zeros up to order ``p``."""
+        # beta = [b0, ..., bq]
+        beta = jnp.asarray(beta)
+        h = jnp.zeros(p)
+        h = h.at[: beta.shape[0]].set(beta)
+        return h
 
-        # for real exponential components
-        diag = jnp.diag(jnp.where(acf.real > 0, jnp.ones(p), -jnp.ones(p)))
+    @jax.jit
+    def _companion_transition(self, dt):
+        """Evaluate the CAR companion-form transition matrix over a lag ``dt``."""
+        dt = jnp.asarray(dt)
+        p = self.alpha.shape[0]
+        arroots = self.arroots
 
-        # for complex exponential components
-        denom = jnp.where(_real_mask, 1.0, arroots.imag)
-        diag_complex = jnp.diag(
-            2
-            * jnp.square(
-                arroots.real / denom * jnp.roll(_complex_select, 1) * _complex_mask
-            )
-        )
-        c_over_d = arroots.real / denom
+        if p == 1:
+            return jnp.exp(-self.alpha[0] * dt)[None, None]
 
-        # upper triangular entries
-        sc_complex_u = jnp.diag((-c_over_d * _complex_select)[:-1], k=1)
+        # companion_matrix(alpha).T is diagonalizable by the AR roots when they are
+        # distinct; this constructs the transition without calling matrix expm.
+        exp_diag = jnp.exp(arroots * dt)
+        vecs = self._companion_eigenvectors(arroots)
+        vecs_inv = jnp.linalg.inv(vecs)
+        transition = vecs @ (exp_diag[:, None] * vecs_inv)
+        return transition.real
 
-        return diag + diag_complex + sc_complex_u + sc_complex_u.T
+    def design_matrix(self):
+        """Return the companion-form drift matrix for the latent CAR state."""
+        p = self.alpha.shape[0]
+        if p == 1:
+            return jnp.array([[-self.alpha[0]]])
 
-    def observation_model(self, X: JAXArray) -> JAXArray:  # noqa: D102
-        # TODO: Write docstring.
+        F = jnp.zeros((p, p))
+        F = F.at[jnp.arange(p - 1), jnp.arange(1, p)].set(1.0)
+        F = F.at[-1, :].set(-self.alpha)
+        return F
+
+    def observation_model(self, X):
+        """Return the observation vector that maps the state to the process value."""
         del X
-        (
-            arroots,
-            acf,
-            _real_mask,
-            _complex_mask,
-            _complex_select,
-            om_real,
-            om_complex,
-        ) = _compute(self.alpha, self.beta, self.sigma)
+        p = self.alpha.shape[0]
+        return self._padded_ma(self.beta, p)
 
-        # return self.obsmodel
-        return jnp.where(
-            _real_mask,
-            om_real,
-            jnp.ravel(om_complex)[::2],
-        )
+    def stationary_covariance(self):
+        """Return the stationary covariance of the latent companion-form state."""
+        return carma_root_stationary_covariance(self.arroots, self.sigma_w)
 
-    def transition_matrix(self, X1: JAXArray, X2: JAXArray) -> JAXArray:  # noqa: D102
-        # TODO: Write docstring.
-        (
-            arroots,
-            acf,
-            _real_mask,
-            _complex_mask,
-            _complex_select,
-            om_real,
-            om_complex,
-        ) = _compute(self.alpha, self.beta, self.sigma)
-
+    def transition_matrix(self, X1, X2):
+        """Return the state transition matrix between two one-dimensional inputs."""
         dt = X2 - X1
-        c = -arroots.real
-        d = -arroots.imag
-        decay = jnp.exp(-c * dt)
-        sin = jnp.sin(d * dt)
-
-        tm_real = jnp.diag(decay * _real_mask)
-        tm_complex_diag = jnp.diag(decay * jnp.cos(d * dt) * _complex_mask)
-        tm_complex_u = jnp.diag(
-            (decay * sin * _complex_select)[:-1],
-            k=1,
-        )
-
-        return tm_real + tm_complex_diag + -tm_complex_u.T + tm_complex_u
+        return self._companion_transition(dt)
 
     @jax.jit
     def power(
         self, f: float | JAXArray, df: float | JAXArray | None = None
     ) -> JAXArray:
         """Compute the power spectral density (PSD) at frequency `f`."""
-        arparams = jnp.append(jnp.array(self.alpha), 1.0)
-        maparams = jnp.array(self.beta)
+        del df
+        arparams = jnp.append(jnp.asarray(self.alpha), 1.0)
+        maparams = jnp.asarray(self.beta)
 
         complex_dtype = dtypes.to_complex_dtype(arparams.dtype)
-
-        # init terms
         num_terms = jnp.zeros(1, dtype=complex_dtype)
         denom_terms = jnp.zeros(1, dtype=complex_dtype)
 
@@ -503,19 +444,77 @@ class CARMA(Quasisep):
 
         num = jnp.abs(jnp.power(num_terms, 2))
         denom = jnp.abs(jnp.power(denom_terms, 2))
+        return num[0] / denom[0]
 
-        return (num / denom)[0]
+
+@jax.jit
+def carma_root_stationary_covariance(
+    arroots: JAXArray,
+    sigma: JAXArray | float = 1.0,
+) -> JAXArray:
+    r"""Compute the CARMA state stationary covariance from AR roots.
+
+    This implements the closed-form expression
+
+    .. math::
+
+        V_{ij} = -
+        \,\sigma^2 \, \sum_{k=1}^{p}
+        \frac{r_k^i(-r_k)^j}{
+            2\mathrm{Re}(r_k)
+            \prod_{l=1, l\ne k}^{p}(r_l-r_k)(r_l^*+r_k)
+        }
+
+    where :math:`r_k` are the autoregressive roots and :math:`i,j \in [0, p-1]`.
+
+    Args:
+        arroots: The roots of the autoregressive characteristic polynomial.
+        sigma: The driving-noise amplitude :math:`\sigma`.
+
+    Returns:
+        The :math:`p \times p` matrix defined by the root-based covariance
+        expression above.
+    """
+    arroots = jnp.asarray(arroots)
+    sigma = jnp.asarray(sigma)
+    complex_dtype = dtypes.to_complex_dtype(arroots.dtype)
+
+    p = arroots.shape[0]
+    idx = jnp.arange(p)
+    powers = idx[:, None]
+
+    root_diff = arroots[:, None] - arroots[None, :]
+    conj_sum = jnp.conj(arroots)[:, None] + arroots[None, :]
+    off_diag = ~jnp.eye(p, dtype=bool)
+    denom_prod = jnp.prod(
+        jnp.where(
+            off_diag,
+            root_diff * conj_sum,
+            jnp.ones((p, p), dtype=complex_dtype),
+        ),
+        axis=0,
+    )
+    denom = 2.0 * jnp.real(arroots) * denom_prod
+
+    # Rewrite the k-sum as a weighted matrix product to avoid allocating a
+    # full (p, p, p) tensor of intermediate terms.
+    left = jnp.power(arroots[None, :], powers) / denom[None, :]
+    right = jnp.power((-arroots)[None, :], powers)
+    cov = -(sigma**2) * (left @ right.T)
+    cov = 0.5 * (cov + cov.T.conj())
+    return cov.real
 
 
 @jax.jit
 def carma_roots(poly_coeffs: JAXArray) -> JAXArray:
-    """Compute the CARMA polynomial coefficient roots.
+    """Compute roots of a CARMA characteristic polynomial.
 
     Args:
-        poly_coeffs: coefficients of the polynomial
+        poly_coeffs: Polynomial coefficients in ascending power order, so the
+            first element is the constant term.
 
     Returns:
-        roots of the coefficients
+        The polynomial roots sorted by their real part.
     """
     roots = jnp.roots(poly_coeffs[::-1], strip_zeros=False)
     return roots[jnp.argsort(roots.real)]
@@ -523,17 +522,16 @@ def carma_roots(poly_coeffs: JAXArray) -> JAXArray:
 
 @jax.jit
 def carma_quads2poly(quads_coeffs: JAXArray) -> JAXArray:
-    """Expand a product of quadractic equations into a polynomial.
+    """Expand a product of CARMA quadratic factors into a full polynomial.
 
     Args:
-        quads_coeffs: The 0th and 1st order coefficients of the quadractic
-            equations. The last entry is a multiplier, which corresponds
-            to the coefficient of the highest order term in the output full
+        quads_coeffs: Constant and linear coefficients of the quadratic factors
+            used by the Kelly et al. parameterization. The last entry is the
+            multiplier for the highest-order term of the reconstructed
             polynomial.
 
     Returns:
-        Coefficients of the full polynomial. The first entry corresponds to
-        the lowest order term.
+        Polynomial coefficients in ascending power order.
     """
     size = quads_coeffs.shape[0] - 1
     remain = size % 2
@@ -562,16 +560,15 @@ def carma_quads2poly(quads_coeffs: JAXArray) -> JAXArray:
 
 
 def carma_poly2quads(poly_coeffs: JAXArray) -> JAXArray:
-    """Factorize a polynomial into a product of quadratic equations.
+    """Factorize a CARMA polynomial into quadratic and linear factors.
 
     Args:
         poly_coeffs: Coefficients of the input characteristic polynomial. The
-            first entry corresponds to the lowest order term.
+            first entry corresponds to the constant term.
 
     Returns:
-        The 0th and 1st order coefficients of the quadractic equations. The last
-        entry is a multiplier, which corresponds to the coefficient of the highest
-        order term in the full polynomial.
+        Constant and linear coefficients for the factorized quadratic blocks,
+        followed by the multiplier for the highest-order term.
     """
     quads = jnp.empty(0)
     mult_f = poly_coeffs[-1]
@@ -602,17 +599,18 @@ def carma_poly2quads(poly_coeffs: JAXArray) -> JAXArray:
 
 
 def carma_acvf(arroots: JAXArray, arparam: JAXArray, maparam: JAXArray) -> JAXArray:
-    r"""Compute the coefficients of the autocovariance function (ACVF).
+    r"""Compute exponential-basis coefficients of the CARMA autocovariance.
 
     Args:
         arroots: The roots of the autoregressive characteristic polynomial.
-        arparam: :math:`\alpha` parameters
-        maparam: :math:`\beta` parameters
+        arparam: Autoregressive coefficients in ascending power order.
+        maparam: Moving-average coefficients :math:`[\beta_0, \ldots, \beta_q]`
+            in ascending power order.
 
     Returns:
-        ACVF coefficients, each entry corresponds to one root.
+        The coefficients of the exponential expansion of the ACVF, with one
+        coefficient per autoregressive root.
     """
-    from jax._src import dtypes  # type: ignore
 
     arparam = jnp.atleast_1d(arparam)
     maparam = jnp.atleast_1d(maparam)
@@ -641,57 +639,6 @@ def carma_acvf(arroots: JAXArray, arparam: JAXArray, maparam: JAXArray) -> JAXAr
         denom *= (root_k - arroots) * (jnp.conj(root_k) + arroots)
 
     return sigma**2 * num_left * num_right / denom
-
-
-@jax.jit
-def _compute(alpha: JAXArray, beta: JAXArray, sigma: JAXArray) -> tuple[JAXArray, ...]:
-    # Find acvf using Eqn. 4 in Kelly+14, giving the correct combination of
-    # real/complex exponential kernels
-    arroots = carma_roots(jnp.append(alpha, 1.0))
-    acf = carma_acvf(arroots, alpha, beta * sigma)
-
-    # Mask for real/complex exponential kernels
-    _real_mask = jnp.abs(arroots.imag) < 10 * jnp.finfo(arroots.imag.dtype).eps
-    _complex_mask = ~_real_mask
-    complex_idx = jnp.cumsum(_complex_mask) * _complex_mask
-    _complex_select = _complex_mask * complex_idx % 2
-
-    # Construct the obsservation model => real + complex
-    om_real = jnp.sqrt(jnp.abs(acf.real))
-
-    a, b, c, d = (
-        2 * acf.real,
-        2 * acf.imag,
-        -arroots.real,
-        -arroots.imag,
-    )
-    max_d = jnp.finfo(a.dtype).max / 10
-    c2 = jnp.square(c)
-    d2 = jnp.square(d)
-    s2 = c2 + d2
-    denom = jnp.where(_real_mask, 1.0, 2 * c * s2)
-
-    h2_2 = jnp.where(_real_mask, max_d, d2 * (a * c - b * d) / denom)
-    h2 = jnp.sqrt(h2_2)
-
-    denom = jnp.where(_real_mask, 1.0, d)
-    a_d2_s2_h22 = jnp.where(_real_mask, max_d, a * d2 - s2 * h2_2)
-    h1 = (c * h2 - jnp.sqrt(a_d2_s2_h22)) / denom
-
-    # update h1, h2 => assign zero to real terms
-    h1_final = jnp.where(_real_mask, 0.0, h1)
-    h2_final = jnp.where(_real_mask, 0.0, h2)
-    om_complex = jnp.array([h1_final, h2_final])
-
-    return (
-        arroots,
-        acf,
-        _real_mask,
-        _complex_mask,
-        _complex_select,
-        om_real,
-        om_complex,
-    )
 
 
 class MultibandLowRank(tkq.Wrapper):
